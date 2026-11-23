@@ -621,6 +621,7 @@ private fun LiveTrackList(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Row(
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -634,7 +635,8 @@ private fun LiveTrackList(
                                 style = MaterialTheme.typography.labelLarge,
                                 color = if (isThisNext || isThisPlaying) CoroColors.Gold else CoroColors.TextSecondary,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
                             )
                             if (isThisNext) {
                                 Box(
@@ -647,7 +649,9 @@ private fun LiveTrackList(
                                         text = "PROSSIMO",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = CoroColors.Background
+                                        color = CoroColors.Background,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
