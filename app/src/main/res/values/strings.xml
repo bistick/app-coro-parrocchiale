@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Coro</string>
+    <string name="playback_channel_name">Riproduzione basi musicali</string>
+    <string name="playback_channel_desc">Notifica attiva durante la riproduzione delle basi in chiesa</string>
+</resources>

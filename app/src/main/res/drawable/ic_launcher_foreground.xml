@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Note musicale stilizzata in oro liturgico -->
+    <path
+        android:fillColor="#F2B84B"
+        android:pathData="M65,30 L65,64.5 C63.2,63.2 60.8,62.5 58,62.5 C51.9,62.5 47,66.5 47,71.5 C47,76.5 51.9,80.5 58,80.5 C64.1,80.5 69,76.5 69,71.5 L69,43 L80,40 L80,31 L65,30 Z" />
+    <path
+        android:fillColor="#F2B84B"
+        android:pathData="M43,35 L43,69.5 C41.2,68.2 38.8,67.5 36,67.5 C29.9,67.5 25,71.5 25,76.5 C25,81.5 29.9,85.5 36,85.5 C42.1,85.5 47,81.5 47,76.5 L47,42 L69,37 L69,30 L43,35 Z" />
+</vector>
