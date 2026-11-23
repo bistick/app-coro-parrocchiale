@@ -84,6 +84,7 @@ import it.parrocchia.coro.data.prefs.AppSettings
 import it.parrocchia.coro.domain.model.AudioFormat
 import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.theme.CoroColors
+import kotlinx.coroutines.flow.StateFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,7 +93,7 @@ fun LibraryScreen(
     settings: AppSettings,
     isScanning: Boolean,
     pickerPhaseName: String?,
-    playbackState: PlaybackState,
+    playbackStateFlow: StateFlow<PlaybackState>,
     playbackController: PlaybackController,
     onSelectFolder: (android.net.Uri, String?) -> Unit,
     onRescanFolder: () -> Unit,
@@ -304,14 +305,14 @@ fun LibraryScreen(
                 state = filterRowState,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                item(key = "filter_all") {
+                item(key = "filter_all", contentType = "format_chip") {
                     FilterChip(
                         selected = formatFilter == null,
                         onClick = { formatFilterName = null },
                         label = { Text("Tutti (${songs.size})") }
                     )
                 }
-                item(key = "filter_midi") {
+                item(key = "filter_midi", contentType = "format_chip") {
                     FilterChip(
                         selected = formatFilter == AudioFormat.MIDI,
                         onClick = {
@@ -320,7 +321,7 @@ fun LibraryScreen(
                         label = { Text("MIDI") }
                     )
                 }
-                item(key = "filter_audio") {
+                item(key = "filter_audio", contentType = "format_chip") {
                     FilterChip(
                         selected = formatFilter == AudioFormat.AUDIO,
                         onClick = {
@@ -330,7 +331,11 @@ fun LibraryScreen(
                     )
                 }
                 if (folders.size > 1) {
-                    items(folders, key = { "folder_$it" }) { folder ->
+                    items(
+                        items = folders,
+                        key = { "folder_$it" },
+                        contentType = { "folder_chip" }
+                    ) { folder ->
                         FilterChip(
                             selected = folderFilter == folder,
                             onClick = { folderFilter = if (folderFilter == folder) null else folder },
@@ -363,7 +368,11 @@ fun LibraryScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding() + 24.dp)
                 ) {
-                    items(filteredSongs, key = { it.id }) { song ->
+                    items(
+                        items = filteredSongs,
+                        key = { it.id },
+                        contentType = { it.audioFormat }
+                    ) { song ->
                         LibrarySongRow(
                             song = song,
                             isPickerMode = onPickSongForPhase != null,
@@ -387,7 +396,7 @@ fun LibraryScreen(
             song = song,
             initialSettings = song.defaultSettings,
             showSaveAsDefaultToggle = false,
-            playbackState = playbackState,
+            playbackStateFlow = playbackStateFlow,
             playbackController = playbackController,
             onSave = { newSettings, _ ->
                 onSaveSongDefaults(song, newSettings)

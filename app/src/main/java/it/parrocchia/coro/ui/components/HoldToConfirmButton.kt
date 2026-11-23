@@ -9,7 +9,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,10 +18,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -39,6 +40,9 @@ import kotlinx.coroutines.launch
  * si attiva solo mantenendo la pressione per [holdDurationMs] millisecondi.
  * Compatibile con lo scorrimento di LazyColumn (se l'utente trascina per scorrere,
  * la pressione viene annullata automaticamente senza attivare il comando).
+ *
+ * Ottimizzazione performance: l'avanzamento dell'animazione viene letto esclusivamente
+ * in fase di Draw tramite [Modifier.drawBehind], evitando ricomposizioni a 60-120fps.
  */
 @Composable
 fun HoldToConfirmSurface(
@@ -51,9 +55,9 @@ fun HoldToConfirmSurface(
     border: BorderStroke? = null,
     shape: Shape = RoundedCornerShape(16.dp),
     contentDescriptionText: String? = null,
-    content: @Composable BoxScope.(holdProgress: Float, isHolding: Boolean) -> Unit
+    hapticFeedback: HapticFeedback = LocalHapticFeedback.current,
+    content: @Composable BoxScope.(isHolding: Boolean) -> Unit
 ) {
-    val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val progress = remember { Animatable(0f) }
     var isHolding by remember { mutableStateOf(false) }
@@ -61,12 +65,25 @@ fun HoldToConfirmSurface(
     val latestOnConfirmed by rememberUpdatedState(onConfirmed)
     val latestHoldDuration by rememberUpdatedState(holdDurationMs.coerceIn(200, 1500))
     val latestEnabled by rememberUpdatedState(enabled)
+    val latestHaptic by rememberUpdatedState(hapticFeedback)
+    val fillOverlayColor = progressFillColor.copy(alpha = 0.50f)
 
     Box(
         modifier = modifier
+            .graphicsLayer {
+                alpha = if (enabled) 1f else 0.42f
+            }
             .clip(shape)
-            .alpha(if (enabled) 1f else 0.42f)
             .background(containerColor)
+            .drawBehind {
+                val p = progress.value
+                if (p > 0f) {
+                    drawRect(
+                        color = fillOverlayColor,
+                        size = size.copy(width = size.width * p)
+                    )
+                }
+            }
             .then(if (border != null) Modifier.border(border, shape) else Modifier)
             .semantics {
                 role = Role.Button
@@ -91,7 +108,7 @@ fun HoldToConfirmSurface(
                                     )
                                 )
                                 triggered = true
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                latestHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 latestOnConfirmed()
                             } catch (_: CancellationException) {
                                 // Annullato prima del completamento
@@ -113,16 +130,6 @@ fun HoldToConfirmSurface(
                 )
             }
     ) {
-        if (progress.value > 0f) {
-            // Barra di riempimento progressiva da sinistra a destra
-            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                drawRect(
-                    color = progressFillColor.copy(alpha = 0.50f),
-                    size = size.copy(width = size.width * progress.value)
-                )
-            }
-        }
-
-        content(progress.value, isHolding)
+        content(isHolding)
     }
 }

@@ -125,7 +125,7 @@ fun ConfigurePhasesSheet(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 grouped.forEach { (section, sectionPhases) ->
-                    item(key = "header_${section.name}") {
+                    item(key = "header_${section.name}", contentType = "section_header") {
                         Text(
                             text = section.label.uppercase(),
                             style = MaterialTheme.typography.labelLarge,
@@ -133,7 +133,11 @@ fun ConfigurePhasesSheet(
                             modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
                         )
                     }
-                    items(sectionPhases, key = { it.phase.id }) { phaseWithTracks ->
+                    items(
+                        items = sectionPhases,
+                        key = { it.phase.id },
+                        contentType = { "phase_row" }
+                    ) { phaseWithTracks ->
                         val phase = phaseWithTracks.phase
                         val isCustom = phase.standardType == StandardPhaseType.CUSTOM
                         Row(

@@ -67,6 +67,7 @@ import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -88,11 +89,13 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import it.parrocchia.coro.audio.PlaybackState
 import it.parrocchia.coro.audio.PlaybackStatus
 import it.parrocchia.coro.data.db.MassPlanWithPhases
@@ -102,6 +105,9 @@ import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.components.HoldToConfirmSurface
 import it.parrocchia.coro.ui.theme.CoroColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 private data class LiveTrackEntry(
     val phaseLabel: String,
@@ -114,7 +120,7 @@ private data class LiveTrackEntry(
 fun LiveExecutionScreen(
     massPlan: MassPlanWithPhases?,
     settings: AppSettings,
-    playbackState: PlaybackState,
+    playbackStateFlow: StateFlow<PlaybackState>,
     windowSizeClass: WindowSizeClass,
     onPlayTrack: (phaseLabel: String, item: PlannedTrackWithSong) -> Unit,
     onFadeOut: () -> Unit,
@@ -127,8 +133,38 @@ fun LiveExecutionScreen(
     var exitHintVisible by rememberSaveable { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+    // Stato playback mantenuto come State<PlaybackState> per non ricomporre l'intera schermata
+    // ad ogni tick di avanzamento (positionMs); i valori a bassa frequenza vengono derivati.
+    val playbackStateHolder = playbackStateFlow.collectAsStateWithLifecycle()
+    val isLiveBusy by remember {
+        derivedStateOf {
+            val s = playbackStateHolder.value
+            !s.isPreview && s.isBusy
+        }
+    }
+    val isLivePlaying by remember {
+        derivedStateOf {
+            val s = playbackStateHolder.value
+            !s.isPreview && s.status == PlaybackStatus.PLAYING
+        }
+    }
+    val isLiveFading by remember {
+        derivedStateOf {
+            val s = playbackStateHolder.value
+            !s.isPreview && s.status == PlaybackStatus.FADING_OUT
+        }
+    }
+    val activeLiveTrackId by remember {
+        derivedStateOf {
+            val s = playbackStateHolder.value
+            if (!s.isPreview && s.isBusy) s.activeTrackId else null
+        }
+    }
+    val liveErrorMessage by remember {
+        derivedStateOf {
+            val s = playbackStateHolder.value
+            if (s.status == PlaybackStatus.ERROR) s.errorMessage else null
+        }
     }
 
     // Mantieni schermo sempre acceso durante la Messa
@@ -147,19 +183,25 @@ fun LiveExecutionScreen(
         exitHintVisible = true
     }
 
-    LaunchedEffect(exitHintVisible) {
-        if (exitHintVisible) {
+    if (exitHintVisible) {
+        LaunchedEffect(Unit) {
             delay(3000L)
             exitHintVisible = false
         }
     }
 
-    // Monitor periodico del volume multimediale di sistema (utile su cavo jack chiesa)
+    // Monitor periodico del volume multimediale + focus iniziale in un singolo LaunchedEffect
     var mediaVolumePercent by remember { mutableIntStateOf(readMediaVolumePercent(context)) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            mediaVolumePercent = readMediaVolumePercent(context)
-            delay(1500L)
+    LaunchedEffect(context) {
+        launch {
+            focusRequester.requestFocus()
+        }
+        launch {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            while (isActive) {
+                mediaVolumePercent = readMediaVolumePercent(audioManager)
+                delay(1500L)
+            }
         }
     }
 
@@ -180,11 +222,13 @@ fun LiveExecutionScreen(
     val nextEntry = remember(liveEntries) {
         liveEntries.firstOrNull { !it.item.track.playedInSession } ?: liveEntries.firstOrNull()
     }
+    val hasPlayedAny = remember(liveEntries) {
+        liveEntries.any { it.item.track.playedInSession }
+    }
 
     val isWideLayout = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
     val isCompactHeight = windowSizeClass.heightSizeClass == WindowHeightSizeClass.Compact
-    val isLiveBusy = !playbackState.isPreview && playbackState.isBusy
-    val isLivePlaying = !playbackState.isPreview && playbackState.status == PlaybackStatus.PLAYING
+    val playbackStateProvider = remember(playbackStateHolder) { { playbackStateHolder.value } }
 
     Scaffold(
         modifier = Modifier
@@ -217,7 +261,7 @@ fun LiveExecutionScreen(
                         }
                     }
                     event.key == Key.Escape -> {
-                        if (playbackState.status == PlaybackStatus.ERROR && playbackState.errorMessage != null) {
+                        if (liveErrorMessage != null) {
                             onDismissError()
                             true
                         } else {
@@ -236,7 +280,7 @@ fun LiveExecutionScreen(
                 holdDurationMs = settings.holdDurationMs,
                 isLiveBusy = isLiveBusy,
                 showExitHint = exitHintVisible,
-                hasPlayedAny = liveEntries.any { it.item.track.playedInSession },
+                hasPlayedAny = hasPlayedAny,
                 onResetPlayed = { massPlan?.plan?.id?.let(onResetPlayedFlags) },
                 onExitLiveMode = onExitLiveMode
             )
@@ -244,7 +288,10 @@ fun LiveExecutionScreen(
         bottomBar = {
             if (!isWideLayout) {
                 LiveBottomTransportBar(
-                    playbackState = playbackState,
+                    playbackStateProvider = playbackStateProvider,
+                    isPlaying = isLivePlaying,
+                    isFading = isLiveFading,
+                    isBusy = isLiveBusy,
                     nextEntry = nextEntry,
                     holdDurationMs = settings.holdDurationMs,
                     onFadeOut = onFadeOut,
@@ -254,14 +301,14 @@ fun LiveExecutionScreen(
         }
     ) { innerPadding ->
         val layoutDirection = LocalLayoutDirection.current
-        val hasError = playbackState.status == PlaybackStatus.ERROR && playbackState.errorMessage != null
+        val errorMsg = liveErrorMessage
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .consumeWindowInsets(innerPadding)
         ) {
-            if (hasError) {
+            if (errorMsg != null) {
                 Surface(
                     color = CoroColors.StopRed,
                     modifier = Modifier
@@ -281,7 +328,7 @@ fun LiveExecutionScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = playbackState.errorMessage,
+                            text = errorMsg,
                             color = Color.White,
                             modifier = Modifier.weight(1f),
                             fontWeight = FontWeight.SemiBold
@@ -293,7 +340,7 @@ fun LiveExecutionScreen(
                 }
             }
 
-            val contentTopPadding = if (hasError) 0.dp else innerPadding.calculateTopPadding()
+            val contentTopPadding = if (errorMsg != null) 0.dp else innerPadding.calculateTopPadding()
 
             if (isWideLayout) {
                 val edgePad = if (isCompactHeight) 10.dp else 16.dp
@@ -309,8 +356,10 @@ fun LiveExecutionScreen(
                 ) {
                     LiveTrackList(
                         entries = liveEntries,
-                        nextEntry = nextEntry,
-                        playbackState = playbackState,
+                        nextTrackId = nextEntry?.item?.track?.id,
+                        activeTrackId = activeLiveTrackId,
+                        isAnyLiveBusy = isLiveBusy,
+                        isFadingOut = isLiveFading,
                         holdDurationMs = settings.holdDurationMs,
                         onPlayTrack = onPlayTrack,
                         contentPadding = PaddingValues(
@@ -322,7 +371,10 @@ fun LiveExecutionScreen(
                             .fillMaxHeight()
                     )
                     LiveSideControlDesk(
-                        playbackState = playbackState,
+                        playbackStateProvider = playbackStateProvider,
+                        isPlaying = isLivePlaying,
+                        isFading = isLiveFading,
+                        isBusy = isLiveBusy,
                         nextEntry = nextEntry,
                         holdDurationMs = settings.holdDurationMs,
                         isCompactHeight = isCompactHeight,
@@ -341,8 +393,10 @@ fun LiveExecutionScreen(
             } else {
                 LiveTrackList(
                     entries = liveEntries,
-                    nextEntry = nextEntry,
-                    playbackState = playbackState,
+                    nextTrackId = nextEntry?.item?.track?.id,
+                    activeTrackId = activeLiveTrackId,
+                    isAnyLiveBusy = isLiveBusy,
+                    isFadingOut = isLiveFading,
                     holdDurationMs = settings.holdDurationMs,
                     onPlayTrack = onPlayTrack,
                     contentPadding = PaddingValues(
@@ -434,7 +488,7 @@ private fun LiveTopHeader(
                         border = BorderStroke(1.dp, CoroColors.Border),
                         shape = RoundedCornerShape(10.dp),
                         contentDescriptionText = "Tieni premuto per azzerare le spunte dei brani eseguiti"
-                    ) { _, _ ->
+                    ) { _ ->
                         Row(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -453,7 +507,7 @@ private fun LiveTopHeader(
                     border = BorderStroke(1.dp, if (showExitHint) CoroColors.Gold else CoroColors.Border),
                     shape = RoundedCornerShape(10.dp),
                     contentDescriptionText = "Tieni premuto per uscire dalla modalità Esecuzione"
-                ) { _, _ ->
+                ) { _ ->
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -501,15 +555,18 @@ private fun LiveTopHeader(
 @Composable
 private fun LiveTrackList(
     entries: List<LiveTrackEntry>,
-    nextEntry: LiveTrackEntry?,
-    playbackState: PlaybackState,
+    nextTrackId: Long?,
+    activeTrackId: Long?,
+    isAnyLiveBusy: Boolean,
+    isFadingOut: Boolean,
     holdDurationMs: Int,
     onPlayTrack: (String, PlannedTrackWithSong) -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier
 ) {
-    val isAnyLiveBusy = !playbackState.isPreview && playbackState.isBusy
     val listState = rememberLazyListState()
+    // Risolto una sola volta nel contenitore padre invece che dentro ogni item della LazyColumn
+    val hapticFeedback = LocalHapticFeedback.current
 
     LazyColumn(
         state = listState,
@@ -517,17 +574,19 @@ private fun LiveTrackList(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = contentPadding
     ) {
-        items(entries, key = { it.item.track.id }) { entry ->
+        items(
+            items = entries,
+            key = { it.item.track.id },
+            contentType = { "live_track" }
+        ) { entry ->
             val track = entry.item.track
             val song = entry.item.song
-            val isThisPlaying = !playbackState.isPreview &&
-                playbackState.activeTrackId == track.id &&
-                playbackState.isBusy
-            val isThisNext = !isAnyLiveBusy && nextEntry?.item?.track?.id == track.id
+            val isThisPlaying = isAnyLiveBusy && activeTrackId == track.id
+            val isThisNext = !isAnyLiveBusy && nextTrackId == track.id
             val isPlayed = track.playedInSession && !isThisPlaying
 
             val containerColor = when {
-                isThisPlaying && playbackState.status == PlaybackStatus.FADING_OUT -> CoroColors.FadeAmber.copy(alpha = 0.28f)
+                isThisPlaying && isFadingOut -> CoroColors.FadeAmber.copy(alpha = 0.28f)
                 isThisPlaying -> CoroColors.PlayGreen.copy(alpha = 0.32f)
                 isThisNext -> CoroColors.SurfaceHighlight
                 isPlayed -> CoroColors.PlayedMuted
@@ -535,7 +594,7 @@ private fun LiveTrackList(
             }
 
             val borderColor = when {
-                isThisPlaying && playbackState.status == PlaybackStatus.FADING_OUT -> CoroColors.FadeAmberFill
+                isThisPlaying && isFadingOut -> CoroColors.FadeAmberFill
                 isThisPlaying -> CoroColors.PlayGreenFill
                 isThisNext -> CoroColors.Gold
                 isPlayed -> CoroColors.PlayedAccent.copy(alpha = 0.4f)
@@ -551,8 +610,9 @@ private fun LiveTrackList(
                 border = BorderStroke(if (isThisPlaying || isThisNext) 2.dp else 1.dp, borderColor),
                 shape = RoundedCornerShape(18.dp),
                 contentDescriptionText = "Tieni premuto per avviare ${entry.phaseLabel} ${song.title}",
+                hapticFeedback = hapticFeedback,
                 modifier = Modifier.fillMaxWidth()
-            ) { _, isHolding ->
+            ) { isHolding ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -607,19 +667,27 @@ private fun LiveTrackList(
 
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        val details = buildList {
-                            add(song.audioFormat.shortLabel)
-                            if (track.transposeSemitones != 0) {
-                                add(TrackSettings.formatTranspose(track.transposeSemitones))
-                            }
-                            if (track.startOffsetMs > 0L) {
-                                add("Attacco ${TrackSettings.formatTimeMs(track.startOffsetMs)}")
-                            }
-                            add("Sfuma ${TrackSettings.formatFadeSec(track.fadeOutMs)}")
-                            if (track.volume != 1.0f) {
-                                add("Vol ${TrackSettings.formatVolumePercent(track.volume)}")
-                            }
-                        }.joinToString(" · ")
+                        val details = remember(
+                            song.audioFormat,
+                            track.transposeSemitones,
+                            track.startOffsetMs,
+                            track.fadeOutMs,
+                            track.volume
+                        ) {
+                            buildList {
+                                add(song.audioFormat.shortLabel)
+                                if (track.transposeSemitones != 0) {
+                                    add(TrackSettings.formatTranspose(track.transposeSemitones))
+                                }
+                                if (track.startOffsetMs > 0L) {
+                                    add("Attacco ${TrackSettings.formatTimeMs(track.startOffsetMs)}")
+                                }
+                                add("Sfuma ${TrackSettings.formatFadeSec(track.fadeOutMs)}")
+                                if (track.volume != 1.0f) {
+                                    add("Vol ${TrackSettings.formatVolumePercent(track.volume)}")
+                                }
+                            }.joinToString(" · ")
+                        }
 
                         Text(
                             text = if (isHolding) "Tieni premuto per avviare..." else details,
@@ -669,15 +737,21 @@ private fun LiveTrackList(
 
 @Composable
 private fun LiveBottomTransportBar(
-    playbackState: PlaybackState,
+    playbackStateProvider: () -> PlaybackState,
+    isPlaying: Boolean,
+    isFading: Boolean,
+    isBusy: Boolean,
     nextEntry: LiveTrackEntry?,
     holdDurationMs: Int,
     onFadeOut: () -> Unit,
     onStopImmediate: () -> Unit
 ) {
-    val isPlaying = !playbackState.isPreview && playbackState.status == PlaybackStatus.PLAYING
-    val isFading = !playbackState.isPreview && playbackState.status == PlaybackStatus.FADING_OUT
-    val isBusy = !playbackState.isPreview && playbackState.isBusy
+    val activeTitle by remember(playbackStateProvider) {
+        derivedStateOf { playbackStateProvider().title }
+    }
+    val activeFadeOutMs by remember(playbackStateProvider) {
+        derivedStateOf { playbackStateProvider().fadeOutMs }
+    }
 
     Surface(
         color = CoroColors.Surface,
@@ -695,53 +769,17 @@ private fun LiveBottomTransportBar(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Riga stato corrente + barra avanzamento
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = when {
-                        isFading -> "SFUMATURA IN CORSO · ${playbackState.title}"
-                        isPlaying -> "IN RIPRODUZIONE · ${playbackState.title}"
-                        nextEntry != null -> "Pronto: ${nextEntry.phaseLabel} — ${nextEntry.item.song.title}"
-                        else -> "Pronto"
-                    },
-                    style = MaterialTheme.typography.labelLarge,
-                    color = when {
-                        isFading -> CoroColors.FadeAmberFill
-                        isPlaying -> CoroColors.PlayGreenFill
-                        else -> CoroColors.TextSecondary
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (isBusy) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "${TrackSettings.formatTimeMs(playbackState.positionMs)} / ${TrackSettings.formatTimeMs(playbackState.durationMs)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = CoroColors.TextPrimary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
+            // Riga stato corrente + avanzamento isolato
+            LiveBottomProgressSection(
+                playbackStateProvider = playbackStateProvider,
+                isPlaying = isPlaying,
+                isFading = isFading,
+                isBusy = isBusy,
+                activeTitle = activeTitle,
+                nextEntry = nextEntry
+            )
 
-            if (isBusy) {
-                LinearProgressIndicator(
-                    progress = { playbackState.progressFraction },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = if (isFading) CoroColors.FadeAmberFill else CoroColors.PlayGreenFill,
-                    trackColor = CoroColors.SurfaceElevated
-                )
-            }
-
-            // Tasti giganti SFUMA e STOP IMMEDIATO
+            // Tasti giganti SFUMA e STOP IMMEDIATO (non si ricompongono durante i tick di positionMs)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -757,7 +795,7 @@ private fun LiveBottomTransportBar(
                     modifier = Modifier
                         .weight(1.15f)
                         .height(74.dp)
-                ) { _, _ ->
+                ) { _ ->
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.Center,
@@ -778,7 +816,7 @@ private fun LiveBottomTransportBar(
                                 color = Color.White
                             )
                             Text(
-                                text = if (isBusy) TrackSettings.formatFadeSec(playbackState.fadeOutMs) else "Tieni premuto",
+                                text = if (isBusy) TrackSettings.formatFadeSec(activeFadeOutMs) else "Tieni premuto",
                                 fontSize = 12.sp,
                                 color = Color.White.copy(alpha = 0.85f)
                             )
@@ -797,7 +835,7 @@ private fun LiveBottomTransportBar(
                     modifier = Modifier
                         .weight(1f)
                         .height(74.dp)
-                ) { _, _ ->
+                ) { _ ->
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.Center,
@@ -831,8 +869,69 @@ private fun LiveBottomTransportBar(
 }
 
 @Composable
+private fun LiveBottomProgressSection(
+    playbackStateProvider: () -> PlaybackState,
+    isPlaying: Boolean,
+    isFading: Boolean,
+    isBusy: Boolean,
+    activeTitle: String,
+    nextEntry: LiveTrackEntry?
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = when {
+                    isFading -> "SFUMATURA IN CORSO · $activeTitle"
+                    isPlaying -> "IN RIPRODUZIONE · $activeTitle"
+                    nextEntry != null -> "Pronto: ${nextEntry.phaseLabel} — ${nextEntry.item.song.title}"
+                    else -> "Pronto"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = when {
+                    isFading -> CoroColors.FadeAmberFill
+                    isPlaying -> CoroColors.PlayGreenFill
+                    else -> CoroColors.TextSecondary
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (isBusy) {
+                val state = playbackStateProvider()
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "${TrackSettings.formatTimeMs(state.positionMs)} / ${TrackSettings.formatTimeMs(state.durationMs)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = CoroColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        if (isBusy) {
+            LinearProgressIndicator(
+                progress = { playbackStateProvider().progressFraction },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = if (isFading) CoroColors.FadeAmberFill else CoroColors.PlayGreenFill,
+                trackColor = CoroColors.SurfaceElevated
+            )
+        }
+    }
+}
+
+@Composable
 private fun LiveSideControlDesk(
-    playbackState: PlaybackState,
+    playbackStateProvider: () -> PlaybackState,
+    isPlaying: Boolean,
+    isFading: Boolean,
+    isBusy: Boolean,
     nextEntry: LiveTrackEntry?,
     holdDurationMs: Int,
     isCompactHeight: Boolean,
@@ -841,10 +940,16 @@ private fun LiveSideControlDesk(
     onStopImmediate: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isPlaying = !playbackState.isPreview && playbackState.status == PlaybackStatus.PLAYING
-    val isFading = !playbackState.isPreview && playbackState.status == PlaybackStatus.FADING_OUT
-    val isBusy = !playbackState.isPreview && playbackState.isBusy
     val deskScrollState = rememberScrollState()
+    val activePhaseLabel by remember(playbackStateProvider) {
+        derivedStateOf { playbackStateProvider().phaseLabel }
+    }
+    val activeTitle by remember(playbackStateProvider) {
+        derivedStateOf { playbackStateProvider().title }
+    }
+    val activeFadeOutMs by remember(playbackStateProvider) {
+        derivedStateOf { playbackStateProvider().fadeOutMs }
+    }
 
     Card(
         modifier = modifier,
@@ -875,14 +980,14 @@ private fun LiveSideControlDesk(
                     }
                 )
                 Text(
-                    text = if (isBusy) playbackState.phaseLabel else nextEntry?.phaseLabel ?: "—",
+                    text = if (isBusy) activePhaseLabel else nextEntry?.phaseLabel ?: "—",
                     style = MaterialTheme.typography.titleMedium,
                     color = CoroColors.TextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = if (isBusy) playbackState.title else nextEntry?.item?.song?.title ?: "Nessun brano",
+                    text = if (isBusy) activeTitle else nextEntry?.item?.song?.title ?: "Nessun brano",
                     fontSize = if (isCompactHeight) 20.sp else 26.sp,
                     lineHeight = if (isCompactHeight) 24.sp else 32.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -893,38 +998,18 @@ private fun LiveSideControlDesk(
 
                 Spacer(modifier = Modifier.height(if (isCompactHeight) 4.dp else 8.dp))
 
-                LinearProgressIndicator(
-                    progress = { if (isBusy) playbackState.progressFraction else 0f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(if (isCompactHeight) 8.dp else 10.dp)
-                        .clip(RoundedCornerShape(5.dp)),
-                    color = if (isFading) CoroColors.FadeAmberFill else CoroColors.PlayGreenFill,
-                    trackColor = CoroColors.SurfaceElevated
+                LiveDeskProgressBar(
+                    playbackStateProvider = playbackStateProvider,
+                    isBusy = isBusy,
+                    isFading = isFading,
+                    isCompactHeight = isCompactHeight,
+                    fallbackDurationMs = nextEntry?.item?.song?.durationMs ?: 0L
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = if (isBusy) TrackSettings.formatTimeMs(playbackState.positionMs) else "0:00",
-                        style = if (isCompactHeight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
-                        color = CoroColors.TextSecondary
-                    )
-                    Text(
-                        text = if (isBusy)
-                            TrackSettings.formatTimeMs(playbackState.durationMs)
-                        else
-                            TrackSettings.formatTimeMs(nextEntry?.item?.song?.durationMs ?: 0L),
-                        style = if (isCompactHeight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
-                        color = CoroColors.TextSecondary
-                    )
-                }
             }
 
             Spacer(modifier = Modifier.height(if (isCompactHeight) 10.dp else 16.dp))
 
-            // Controlli giganti adattivi per Tablet e Landscape
+            // Controlli giganti adattivi per Tablet e Landscape (non si ricompongono sui tick di positionMs)
             val playButtonHeight = if (isCompactHeight) 56.dp else 88.dp
             val stopButtonHeight = if (isCompactHeight) 54.dp else 84.dp
             val actionFontSize = if (isCompactHeight) 16.sp else 20.sp
@@ -942,7 +1027,7 @@ private fun LiveSideControlDesk(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(playButtonHeight)
-                ) { _, _ ->
+                ) { _ ->
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.Center,
@@ -975,7 +1060,7 @@ private fun LiveSideControlDesk(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(stopButtonHeight)
-                ) { _, _ ->
+                ) { _ ->
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.Center,
@@ -989,7 +1074,7 @@ private fun LiveSideControlDesk(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = if (isBusy) "SFUMA (${TrackSettings.formatFadeSec(playbackState.fadeOutMs)})" else "SFUMA",
+                            text = if (isBusy) "SFUMA (${TrackSettings.formatFadeSec(activeFadeOutMs)})" else "SFUMA",
                             fontSize = actionFontSize,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White
@@ -1008,7 +1093,7 @@ private fun LiveSideControlDesk(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(stopButtonHeight)
-                ) { _, _ ->
+                ) { _ ->
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.Center,
@@ -1034,8 +1119,53 @@ private fun LiveSideControlDesk(
     }
 }
 
+@Composable
+private fun LiveDeskProgressBar(
+    playbackStateProvider: () -> PlaybackState,
+    isBusy: Boolean,
+    isFading: Boolean,
+    isCompactHeight: Boolean,
+    fallbackDurationMs: Long
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 4.dp else 8.dp)) {
+        LinearProgressIndicator(
+            progress = { if (isBusy) playbackStateProvider().progressFraction else 0f },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (isCompactHeight) 8.dp else 10.dp)
+                .clip(RoundedCornerShape(5.dp)),
+            color = if (isFading) CoroColors.FadeAmberFill else CoroColors.PlayGreenFill,
+            trackColor = CoroColors.SurfaceElevated
+        )
+        val state = if (isBusy) playbackStateProvider() else null
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = if (state != null) TrackSettings.formatTimeMs(state.positionMs) else "0:00",
+                style = if (isCompactHeight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                color = CoroColors.TextSecondary
+            )
+            Text(
+                text = if (state != null)
+                    TrackSettings.formatTimeMs(state.durationMs)
+                else
+                    TrackSettings.formatTimeMs(fallbackDurationMs),
+                style = if (isCompactHeight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                color = CoroColors.TextSecondary
+            )
+        }
+    }
+}
+
 private fun readMediaVolumePercent(context: Context): Int {
-    val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return 100
+    val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    return readMediaVolumePercent(am)
+}
+
+private fun readMediaVolumePercent(audioManager: AudioManager?): Int {
+    val am = audioManager ?: return 100
     val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
     val curVol = am.getStreamVolume(AudioManager.STREAM_MUSIC)
     return ((curVol * 100f) / maxVol).toInt().coerceIn(0, 100)

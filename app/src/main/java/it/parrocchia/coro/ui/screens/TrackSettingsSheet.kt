@@ -45,12 +45,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import it.parrocchia.coro.audio.PlaybackController
 import it.parrocchia.coro.audio.PlaybackState
 import it.parrocchia.coro.data.db.SongEntity
 import it.parrocchia.coro.domain.model.AudioFormat
 import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.theme.CoroColors
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -59,7 +61,7 @@ fun TrackSettingsSheet(
     song: SongEntity,
     initialSettings: TrackSettings,
     showSaveAsDefaultToggle: Boolean,
-    playbackState: PlaybackState,
+    playbackStateFlow: StateFlow<PlaybackState>,
     playbackController: PlaybackController,
     onSave: (settings: TrackSettings, saveAsDefault: Boolean) -> Unit,
     onDismiss: () -> Unit
@@ -80,15 +82,7 @@ fun TrackSettingsSheet(
     }
     var saveAsDefault by rememberSaveable(song.id) { mutableStateOf(true) }
 
-    val isPreviewPlayingThisSong = playbackState.isPreview &&
-        playbackState.songId == song.id &&
-        playbackState.isPlayingOrFading
-
-    val effectiveDurationMs = maxOf(
-        song.durationMs,
-        if (isPreviewPlayingThisSong) playbackState.durationMs else 0L,
-        10_000L
-    )
+    val effectiveDurationMs = maxOf(song.durationMs, 10_000L)
 
     DisposableEffect(Unit) {
         onDispose {
@@ -126,90 +120,18 @@ fun TrackSettingsSheet(
                 )
             }
 
-            // Box Anteprima Audio
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(CoroColors.SurfaceElevated)
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "Anteprima ascolto",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = CoroColors.TextPrimary
-                    )
-                    Button(
-                        onClick = {
-                            if (isPreviewPlayingThisSong) {
-                                playbackController.stopPreviewIfActive()
-                            } else {
-                                playbackController.startPreview(
-                                    song = song,
-                                    settings = TrackSettings(
-                                        fadeOutMs = fadeOutMs,
-                                        startOffsetMs = startOffsetMs,
-                                        transposeSemitones = transpose,
-                                        volume = volume
-                                    )
-                                )
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isPreviewPlayingThisSong) CoroColors.StopRed else CoroColors.PlayGreen
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (isPreviewPlayingThisSong) Icons.Default.Stop else Icons.Default.PlayArrow,
-                            contentDescription = null
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (isPreviewPlayingThisSong) "Ferma" else "Ascolta")
-                    }
-                }
-
-                val currentPos = if (isPreviewPlayingThisSong) playbackState.positionMs else startOffsetMs
-                Slider(
-                    value = currentPos.toFloat().coerceIn(0f, effectiveDurationMs.toFloat()),
-                    onValueChange = { newMs ->
-                        val target = newMs.toLong()
-                        if (isPreviewPlayingThisSong) {
-                            playbackController.seekPreview(target)
-                        } else {
-                            startOffsetMs = target
-                        }
-                    },
-                    valueRange = 0f..effectiveDurationMs.toFloat()
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "${TrackSettings.formatTimeMs(currentPos)} / ${TrackSettings.formatTimeMs(effectiveDurationMs)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = CoroColors.TextSecondary
-                    )
-                    OutlinedButton(
-                        onClick = {
-                            startOffsetMs = currentPos.coerceIn(0L, (effectiveDurationMs - 1000L).coerceAtLeast(0L))
-                        },
-                        enabled = isPreviewPlayingThisSong
-                    ) {
-                        Icon(Icons.Default.Flag, contentDescription = null)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Imposta attacco qui")
-                    }
-                }
-            }
+            // Box Anteprima Audio isolato: raccoglie playbackStateFlow qui così i controlli sotto
+            // non si ricompongono ad ogni tick di avanzamento della traccia.
+            TrackPreviewBox(
+                song = song,
+                startOffsetMs = startOffsetMs,
+                fadeOutMs = fadeOutMs,
+                transpose = transpose,
+                volume = volume,
+                playbackStateFlow = playbackStateFlow,
+                playbackController = playbackController,
+                onStartOffsetChange = { startOffsetMs = it }
+            )
 
             // 1. Punto di attacco
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -444,6 +366,113 @@ fun TrackSettingsSheet(
                 ) {
                     Text("Salva impostazioni", fontWeight = FontWeight.Bold)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackPreviewBox(
+    song: SongEntity,
+    startOffsetMs: Long,
+    fadeOutMs: Int,
+    transpose: Int,
+    volume: Float,
+    playbackStateFlow: StateFlow<PlaybackState>,
+    playbackController: PlaybackController,
+    onStartOffsetChange: (Long) -> Unit
+) {
+    val playbackState by playbackStateFlow.collectAsStateWithLifecycle()
+    val isPreviewPlayingThisSong = playbackState.isPreview &&
+        playbackState.songId == song.id &&
+        playbackState.isPlayingOrFading
+
+    val effectiveDurationMs = maxOf(
+        song.durationMs,
+        if (isPreviewPlayingThisSong) playbackState.durationMs else 0L,
+        10_000L
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(CoroColors.SurfaceElevated)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Anteprima ascolto",
+                style = MaterialTheme.typography.titleMedium,
+                color = CoroColors.TextPrimary
+            )
+            Button(
+                onClick = {
+                    if (isPreviewPlayingThisSong) {
+                        playbackController.stopPreviewIfActive()
+                    } else {
+                        playbackController.startPreview(
+                            song = song,
+                            settings = TrackSettings(
+                                fadeOutMs = fadeOutMs,
+                                startOffsetMs = startOffsetMs,
+                                transposeSemitones = transpose,
+                                volume = volume
+                            )
+                        )
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isPreviewPlayingThisSong) CoroColors.StopRed else CoroColors.PlayGreen
+                )
+            ) {
+                Icon(
+                    imageVector = if (isPreviewPlayingThisSong) Icons.Default.Stop else Icons.Default.PlayArrow,
+                    contentDescription = null
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (isPreviewPlayingThisSong) "Ferma" else "Ascolta")
+            }
+        }
+
+        val currentPos = if (isPreviewPlayingThisSong) playbackState.positionMs else startOffsetMs
+        Slider(
+            value = currentPos.toFloat().coerceIn(0f, effectiveDurationMs.toFloat()),
+            onValueChange = { newMs ->
+                val target = newMs.toLong()
+                if (isPreviewPlayingThisSong) {
+                    playbackController.seekPreview(target)
+                } else {
+                    onStartOffsetChange(target)
+                }
+            },
+            valueRange = 0f..effectiveDurationMs.toFloat()
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "${TrackSettings.formatTimeMs(currentPos)} / ${TrackSettings.formatTimeMs(effectiveDurationMs)}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = CoroColors.TextSecondary
+            )
+            OutlinedButton(
+                onClick = {
+                    onStartOffsetChange(currentPos.coerceIn(0L, (effectiveDurationMs - 1000L).coerceAtLeast(0L)))
+                },
+                enabled = isPreviewPlayingThisSong
+            ) {
+                Icon(Icons.Default.Flag, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Imposta attacco qui")
             }
         }
     }

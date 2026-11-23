@@ -142,7 +142,7 @@ fun SettingsScreen(
             verticalItemSpacing = 14.dp
         ) {
             // 1. Cartella Libreria Musicale
-            item(key = "library") {
+            item(key = "library", contentType = "settings_card") {
                 SettingsCard(title = "Libreria musicale sul dispositivo") {
                     Text(
                         text = settings.libraryFolderName?.let { "Cartella attiva: $it" }
@@ -181,7 +181,7 @@ fun SettingsScreen(
             }
 
             // 2. Banco suoni MIDI (SoundFont .sf2)
-            item(key = "soundfont") {
+            item(key = "soundfont", contentType = "settings_card") {
                 SettingsCard(title = "Sintetizzatore MIDI (SoundFont .sf2)") {
                     Text(
                         text = settings.customSoundFontName?.let { "Banco suoni personalizzato: $it" }
@@ -210,7 +210,7 @@ fun SettingsScreen(
             }
 
             // 3. Protezione tocchi accidentali (durata pressione prolungata + area test)
-            item(key = "hold_protection") {
+            item(key = "hold_protection", contentType = "settings_card") {
                 SettingsCard(title = "Protezione tocchi accidentali") {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -249,7 +249,7 @@ fun SettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(62.dp)
-                    ) { _, _ ->
+                    ) { _ ->
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
@@ -272,7 +272,7 @@ fun SettingsScreen(
             }
 
             // 4. Default nuovi brani & Schermo
-            item(key = "general_prefs") {
+            item(key = "general_prefs", contentType = "settings_card") {
                 SettingsCard(title = "Preferenze generali") {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -323,7 +323,7 @@ fun SettingsScreen(
             }
 
             // 5. Info e predisposizioni future
-            item(key = "info") {
+            item(key = "info", contentType = "settings_card") {
                 SettingsCard(title = "Informazioni") {
                     Text(
                         text = "Coro v${BuildConfig.VERSION_NAME} · 100% offline",

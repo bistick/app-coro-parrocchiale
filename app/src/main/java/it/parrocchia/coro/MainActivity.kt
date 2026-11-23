@@ -136,7 +136,6 @@ private fun CoroRootApp(
     val massPlan by viewModel.activeMassPlan.collectAsStateWithLifecycle()
     val songs by viewModel.songs.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
 
@@ -170,7 +169,7 @@ private fun CoroRootApp(
                 composable(Routes.PLANNER) {
                     PlannerScreen(
                         massPlan = massPlan,
-                        playbackState = playbackState,
+                        playbackStateFlow = viewModel.playbackState,
                         playbackController = viewModel.playbackController,
                         onUpdateTitle = viewModel::updateMassTitle,
                         onTogglePhase = viewModel::togglePhase,
@@ -196,7 +195,7 @@ private fun CoroRootApp(
                     LiveExecutionScreen(
                         massPlan = massPlan,
                         settings = settings,
-                        playbackState = playbackState,
+                        playbackStateFlow = viewModel.playbackState,
                         windowSizeClass = windowSizeClass,
                         onPlayTrack = viewModel::playLiveTrack,
                         onFadeOut = viewModel::fadeOutLive,
@@ -231,7 +230,7 @@ private fun CoroRootApp(
                         settings = settings,
                         isScanning = isScanning,
                         pickerPhaseName = if (phaseId > 0L) phaseName else null,
-                        playbackState = playbackState,
+                        playbackStateFlow = viewModel.playbackState,
                         playbackController = viewModel.playbackController,
                         onSelectFolder = viewModel::selectLibraryFolder,
                         onRescanFolder = viewModel::rescanLibraryFolder,

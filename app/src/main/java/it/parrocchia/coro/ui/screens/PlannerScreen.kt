@@ -97,12 +97,13 @@ import it.parrocchia.coro.data.db.PlannedTrackWithSong
 import it.parrocchia.coro.domain.model.AudioFormat
 import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.theme.CoroColors
+import kotlinx.coroutines.flow.StateFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlannerScreen(
     massPlan: MassPlanWithPhases?,
-    playbackState: PlaybackState,
+    playbackStateFlow: StateFlow<PlaybackState>,
     playbackController: PlaybackController,
     onUpdateTitle: (planId: Long, newTitle: String) -> Unit,
     onTogglePhase: (phaseId: Long, enabled: Boolean) -> Unit,
@@ -321,7 +322,11 @@ fun PlannerScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalItemSpacing = 12.dp
             ) {
-                items(enabledPhases, key = { it.phase.id }) { phaseWithTracks ->
+                items(
+                    items = enabledPhases,
+                    key = { it.phase.id },
+                    contentType = { "phase_card" }
+                ) { phaseWithTracks ->
                     PhasePlannerCard(
                         phaseWithTracks = phaseWithTracks,
                         onAddSong = {
@@ -353,7 +358,7 @@ fun PlannerScreen(
             song = item.song,
             initialSettings = item.track.settings,
             showSaveAsDefaultToggle = true,
-            playbackState = playbackState,
+            playbackStateFlow = playbackStateFlow,
             playbackController = playbackController,
             onSave = { newSettings, saveDefault ->
                 onSaveTrackSettings(

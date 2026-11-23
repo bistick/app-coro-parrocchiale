@@ -3,10 +3,12 @@ package it.parrocchia.coro.ui.preview
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.MutableStateFlow
 import it.parrocchia.coro.audio.PlaybackState
 import it.parrocchia.coro.audio.PlaybackStatus
 import it.parrocchia.coro.data.db.MassPhaseEntity
@@ -142,9 +144,13 @@ private fun LiveExecutionScreenFormFactorPreview() {
         LiveExecutionScreen(
             massPlan = sampleMassPlan(),
             settings = AppSettings(),
-            playbackState = PlaybackState(
-                status = PlaybackStatus.IDLE
-            ),
+            playbackStateFlow = remember {
+                MutableStateFlow(
+                    PlaybackState(
+                        status = PlaybackStatus.IDLE
+                    )
+                )
+            },
             windowSizeClass = windowSizeClass,
             onPlayTrack = { _, _ -> },
             onFadeOut = {},
