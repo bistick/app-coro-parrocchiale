@@ -1,14 +1,20 @@
 package it.parrocchia.coro.audio.midi
 
+import android.util.Log
+
 /**
- * Bridge JNI verso TinySoundFont (tsf.h) + TinyMidiLoader (tml.h).
+ * Bridge JNI verso FluidSynth v2.6.2 (sintesi SF2/SF3 con riverbero, chorus e interpolazione 4° ordine)
+ * + TinyMidiLoader (tml.h) per parsing MIDI, trasposizione e seek precisi al millisecondo.
  */
 object NativeMidiSynth {
+
+    private const val TAG = "CoroMidiSynth"
 
     private val libraryLoaded: Boolean = try {
         System.loadLibrary("coro_midi")
         true
-    } catch (_: UnsatisfiedLinkError) {
+    } catch (e: UnsatisfiedLinkError) {
+        Log.e(TAG, "Impossibile caricare la libreria nativa FluidSynth (coro_midi)", e)
         false
     }
 
@@ -54,6 +60,11 @@ object NativeMidiSynth {
         nativeDestroy(handle)
     }
 
+    fun clearSoundFontCache() {
+        if (!libraryLoaded) return
+        nativeClearSoundFontCache()
+    }
+
     fun probeMidiDurationMs(midiBytes: ByteArray): Long {
         if (!libraryLoaded) return 0L
         return nativeProbeMidiDurationMs(midiBytes)
@@ -67,5 +78,6 @@ object NativeMidiSynth {
     private external fun nativeRender(handle: Long, outBuffer: FloatArray, frameCount: Int): Boolean
     private external fun nativeGetPositionMs(handle: Long): Long
     private external fun nativeDestroy(handle: Long)
+    private external fun nativeClearSoundFontCache()
     private external fun nativeProbeMidiDurationMs(midiBytes: ByteArray): Long
 }

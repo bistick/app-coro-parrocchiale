@@ -3,6 +3,7 @@ package it.parrocchia.coro.data.library
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import it.parrocchia.coro.audio.midi.NativeMidiSynth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -15,7 +16,7 @@ class SoundFontManager(private val context: Context) {
 
     /**
      * Garantisce che il SoundFont General MIDI integrato sia estratto su disco locale
-     * e restituisce il percorso assoluto leggibile dal sintetizzatore nativo.
+     * e restituisce il percorso assoluto leggibile dal sintetizzatore FluidSynth.
      */
     suspend fun ensureBundledSoundFontPath(): String = withContext(Dispatchers.IO) {
         val target = File(sfDir, BUNDLED_SF2_FILENAME)
@@ -30,20 +31,21 @@ class SoundFontManager(private val context: Context) {
     }
 
     /**
-     * Importa un file .sf2 scelto dall'utente via SAF nella memoria privata dell'app,
+     * Importa un file .sf2 o .sf3 scelto dall'utente via SAF nella memoria privata dell'app,
      * verificando l'intestazione RIFF/sfbk per evitare file corrotti o non validi.
      */
     suspend fun importCustomSoundFont(uri: Uri): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
         runCatching {
             val displayName = resolveDisplayName(uri) ?: "custom_soundfont.sf2"
-            val tempFile = File(sfDir, "custom_importing.sf2")
+            val ext = if (displayName.lowercase().endsWith(".sf3")) "sf3" else "sf2"
+            val tempFile = File(sfDir, "custom_importing.$ext")
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(tempFile).use { output ->
                     input.copyTo(output)
                 }
             } ?: error("Impossibile aprire il file SoundFont selezionato")
 
-            // Verifica header SoundFont 2: bytes 0..3 = "RIFF", bytes 8..11 = "sfbk"
+            // Verifica header SoundFont 2/3: bytes 0..3 = "RIFF", bytes 8..11 = "sfbk"
             val header = ByteArray(12)
             val readCount = tempFile.inputStream().use { it.read(header) }
             val isRiff = readCount == 12 &&
@@ -59,22 +61,25 @@ class SoundFontManager(private val context: Context) {
 
             if (!isRiff || !isSfbk) {
                 tempFile.delete()
-                error("Il file selezionato non è un SoundFont (.sf2) valido")
+                error("Il file selezionato non è un SoundFont (.sf2 / .sf3) valido")
             }
 
-            val finalFile = File(sfDir, CUSTOM_SF2_FILENAME)
-            if (finalFile.exists()) finalFile.delete()
+            // Rimuove eventuali vecchi file .sf2 / .sf3 prima di salvare quello nuovo
+            File(sfDir, CUSTOM_SF2_FILENAME).delete()
+            File(sfDir, CUSTOM_SF3_FILENAME).delete()
+
+            val finalFile = File(sfDir, if (ext == "sf3") CUSTOM_SF3_FILENAME else CUSTOM_SF2_FILENAME)
             check(tempFile.renameTo(finalFile)) { "Errore nel salvataggio del SoundFont" }
+            NativeMidiSynth.clearSoundFontCache()
 
             finalFile.absolutePath to displayName
         }
     }
 
     suspend fun clearCustomSoundFont() = withContext(Dispatchers.IO) {
-        val customFile = File(sfDir, CUSTOM_SF2_FILENAME)
-        if (customFile.exists()) {
-            customFile.delete()
-        }
+        File(sfDir, CUSTOM_SF2_FILENAME).delete()
+        File(sfDir, CUSTOM_SF3_FILENAME).delete()
+        NativeMidiSynth.clearSoundFontCache()
     }
 
     suspend fun resolveActiveSoundFontPath(customLocalPath: String?): String {
@@ -97,5 +102,6 @@ class SoundFontManager(private val context: Context) {
     companion object {
         const val BUNDLED_SF2_FILENAME = "TimGM6mb.sf2"
         private const val CUSTOM_SF2_FILENAME = "custom_active.sf2"
+        private const val CUSTOM_SF3_FILENAME = "custom_active.sf3"
     }
 }

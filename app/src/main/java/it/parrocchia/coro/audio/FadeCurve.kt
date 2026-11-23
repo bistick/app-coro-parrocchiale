@@ -35,11 +35,18 @@ object FadeCurve {
     }
 
     /**
-     * Limiter morbido per evitare clipping digitale sull'impianto della chiesa
-     * quando il volume relativo del brano supera il 100%.
+     * Limiter morbido continuo (C¹) per evitare clipping digitale sull'impianto della chiesa
+     * quando il volume relativo del brano supera il 100% o su accordi molto densi.
+     * - Lineare (trasparente) entro ±0.85
+     * - Raccordo iperbolico liscio senza scalini verso ±0.99 (margine anti true-peak clipping)
      */
     fun softLimit(sample: Float): Float {
-        if (sample in -0.92f..0.92f) return sample
-        return tanh(sample.toDouble()).toFloat()
+        val threshold = 0.85f
+        val ceiling = 0.99f
+        val absSample = kotlin.math.abs(sample)
+        if (absSample <= threshold) return sample
+        val knee = ceiling - threshold
+        val shaped = threshold + knee * tanh(((absSample - threshold) / knee).toDouble()).toFloat()
+        return if (sample >= 0f) shaped else -shaped
     }
 }

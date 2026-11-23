@@ -54,4 +54,17 @@ class FadeCurveAndMidiTest {
         assertTrue(FadeCurve.softLimit(2.5f) < 1.0f)
         assertTrue(FadeCurve.softLimit(-2.5f) > -1.0f)
     }
+
+    @Test
+    fun softLimit_isContinuousAndMonotonicWithoutCrackleSteps() {
+        var prev = FadeCurve.softLimit(-3.0f)
+        for (i in -299..300) {
+            val x = i / 100f
+            val y = FadeCurve.softLimit(x)
+            assertTrue("Deve restare monotona crescente a x=$x ($prev -> $y)", y >= prev)
+            assertTrue("Nessun salto brusco a x=$x (delta=${y - prev})", (y - prev) <= 0.011f)
+            assertTrue("Sempre entro (-1, 1) a x=$x", y in -1.0f..1.0f)
+            prev = y
+        }
+    }
 }

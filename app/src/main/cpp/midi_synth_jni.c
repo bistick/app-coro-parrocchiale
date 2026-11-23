@@ -2,10 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <pthread.h>
+#include <sys/stat.h>
 #include <android/log.h>
 
-#define TSF_IMPLEMENTATION
-#include "tsf.h"
+#include <fluidsynth.h>
 
 #define TML_IMPLEMENTATION
 #include "tml.h"
@@ -16,10 +17,13 @@
 
 #define DRUM_CHANNEL 9
 #define RENDER_SUBBLOCK_FRAMES 64
-#define MAX_TAIL_MS 3000.0
+#define MAX_TAIL_MS 3200.0
+#define MAX_SF_PATH 1024
 
 typedef struct {
-    tsf* synth;
+    fluid_settings_t* settings;
+    fluid_synth_t* synth;
+    int ownsSynth;
     tml_message* midiHead;
     tml_message* currentMsg;
     int sampleRate;
@@ -29,6 +33,18 @@ typedef struct {
     double endReachedAtMs;
 } MidiSession;
 
+/* Cache globale di un'istanza FluidSynth con SoundFont gia' caricato in RAM,
+ * per avviare i brani successivi della messa istantaneamente senza ricaricare da disco. */
+static pthread_mutex_t g_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+static fluid_settings_t* g_cached_settings = NULL;
+static fluid_synth_t* g_cached_synth = NULL;
+static char g_cached_path[MAX_SF_PATH] = {0};
+static int g_cached_sample_rate = 0;
+static off_t g_cached_file_size = 0;
+static time_t g_cached_file_mtime = 0;
+static int g_cache_in_use = 0;
+static int g_cache_dirty = 0;
+
 static inline int clamp_midi_key(int key) {
     if (key < 0) return 0;
     if (key > 127) return 127;
@@ -37,42 +53,134 @@ static inline int clamp_midi_key(int key) {
 
 static inline int transpose_key(int channel, int key, int semitones) {
     if (channel == DRUM_CHANNEL) {
-        return key;
+        return clamp_midi_key(key);
     }
     return clamp_midi_key(key + semitones);
 }
 
-static void reset_gm_channels(tsf* synth) {
+static void configure_synth_effects(fluid_synth_t* synth) {
     if (!synth) return;
-    tsf_reset(synth);
-    for (int ch = 0; ch < 16; ch++) {
-        if (ch == DRUM_CHANNEL) {
-            tsf_channel_set_bank_preset(synth, ch, 128, 0);
-        } else {
-            tsf_channel_set_bank_preset(synth, ch, 0, 0);
-        }
-        tsf_channel_midi_control(synth, ch, 7, 100);   // Main volume
-        tsf_channel_midi_control(synth, ch, 10, 64);   // Center pan
-        tsf_channel_midi_control(synth, ch, 11, 127);  // Expression
-        tsf_channel_set_pitchwheel(synth, ch, 8192);   // Center pitch wheel
+
+    /* Headroom polifonico calibrato per evitare saturazione sugli accordi pieni */
+    fluid_synth_set_gain(synth, 0.45f);
+    fluid_synth_set_interp_method(synth, -1, FLUID_INTERP_4THORDER);
+
+    /* Riverbero caldo e naturale adatto a organo, piano e archi */
+    fluid_synth_reverb_on(synth, -1, 1);
+    fluid_synth_set_reverb_group_roomsize(synth, -1, 0.58);
+    fluid_synth_set_reverb_group_damp(synth, -1, 0.35);
+    fluid_synth_set_reverb_group_width(synth, -1, 0.85);
+    fluid_synth_set_reverb_group_level(synth, -1, 0.55);
+
+    /* Chorus morbido per archi e pad */
+    fluid_synth_chorus_on(synth, -1, 1);
+    fluid_synth_set_chorus_group_nr(synth, -1, 3);
+    fluid_synth_set_chorus_group_level(synth, -1, 1.0);
+    fluid_synth_set_chorus_group_speed(synth, -1, 0.3);
+    fluid_synth_set_chorus_group_depth(synth, -1, 6.0);
+    fluid_synth_set_chorus_group_type(synth, -1, FLUID_CHORUS_MOD_SINE);
+}
+
+static void flush_effects_tail(fluid_synth_t* synth, int sampleRate) {
+    if (!synth) return;
+    /* Con 0 voci attive, scaricare ~0.8s di delay-line reverb/chorus richiede <1ms di CPU
+     * ed elimina qualsiasi coda residua del brano precedente. */
+    float scratch[512];
+    int totalFrames = (sampleRate > 0) ? (int)(sampleRate * 0.8) : 38400;
+    int remaining = totalFrames;
+    while (remaining > 0) {
+        int block = (remaining > 256) ? 256 : remaining;
+        fluid_synth_write_float(synth, block, scratch, 0, 2, scratch, 1, 2);
+        remaining -= block;
     }
 }
 
-static void apply_state_message(tsf* synth, const tml_message* msg) {
+static void reset_gm_channels(fluid_synth_t* synth) {
+    if (!synth) return;
+    fluid_synth_all_sounds_off(synth, -1);
+    fluid_synth_system_reset(synth);
+    configure_synth_effects(synth);
+}
+
+static int create_fluid_instance(
+    const char* path,
+    int sampleRate,
+    fluid_settings_t** outSettings,
+    fluid_synth_t** outSynth
+) {
+    fluid_settings_t* settings = new_fluid_settings();
+    if (!settings) {
+        LOGE("Impossibile allocare fluid_settings_t");
+        return 0;
+    }
+
+    fluid_settings_setnum(settings, "synth.sample-rate", (double)sampleRate);
+    fluid_settings_setint(settings, "synth.polyphony", 256);
+    fluid_settings_setint(settings, "synth.cpu-cores", 1);
+    fluid_settings_setint(settings, "synth.threadsafe-api", 0);
+    fluid_settings_setint(settings, "synth.reverb.active", 1);
+    fluid_settings_setint(settings, "synth.chorus.active", 1);
+    fluid_settings_setint(settings, "synth.dynamic-sample-loading", 0);
+    fluid_settings_setnum(settings, "synth.gain", 0.45);
+    fluid_settings_setstr(settings, "synth.midi-bank-select", "gs");
+
+    fluid_synth_t* synth = new_fluid_synth(settings);
+    if (!synth) {
+        LOGE("Impossibile creare fluid_synth_t");
+        delete_fluid_settings(settings);
+        return 0;
+    }
+
+    int sfId = fluid_synth_sfload(synth, path, 1);
+    if (sfId == FLUID_FAILED) {
+        LOGE("Impossibile caricare il SoundFont con FluidSynth: %s", path);
+        delete_fluid_synth(synth);
+        delete_fluid_settings(settings);
+        return 0;
+    }
+
+    configure_synth_effects(synth);
+    *outSettings = settings;
+    *outSynth = synth;
+    LOGI("FluidSynth pronto: %s @ %d Hz (sfId=%d)", path, sampleRate, sfId);
+    return 1;
+}
+
+static void free_cached_synth_locked(void) {
+    if (g_cached_synth) {
+        delete_fluid_synth(g_cached_synth);
+        g_cached_synth = NULL;
+    }
+    if (g_cached_settings) {
+        delete_fluid_settings(g_cached_settings);
+        g_cached_settings = NULL;
+    }
+    g_cached_path[0] = '\0';
+    g_cached_sample_rate = 0;
+    g_cached_file_size = 0;
+    g_cached_file_mtime = 0;
+    g_cache_dirty = 0;
+}
+
+static void apply_state_message(fluid_synth_t* synth, const tml_message* msg) {
+    int ch = (int)(unsigned char)msg->channel & 0x0F;
     switch (msg->type) {
         case TML_PROGRAM_CHANGE:
-            tsf_channel_set_presetnumber(
-                synth,
-                msg->channel,
-                msg->program,
-                (msg->channel == DRUM_CHANNEL) ? 1 : 0
-            );
+            fluid_synth_program_change(synth, ch, (int)(unsigned char)msg->program & 0x7F);
             break;
         case TML_CONTROL_CHANGE:
-            tsf_channel_midi_control(synth, msg->channel, msg->control, msg->control_value);
+            fluid_synth_cc(
+                synth,
+                ch,
+                (int)(unsigned char)msg->control & 0x7F,
+                (int)(unsigned char)msg->control_value & 0x7F
+            );
             break;
         case TML_PITCH_BEND:
-            tsf_channel_set_pitchwheel(synth, msg->channel, msg->pitch_bend);
+            fluid_synth_pitch_bend(synth, ch, (int)msg->pitch_bend);
+            break;
+        case TML_CHANNEL_PRESSURE:
+            fluid_synth_channel_pressure(synth, ch, (int)(unsigned char)msg->channel_pressure & 0x7F);
             break;
         default:
             break;
@@ -80,25 +188,33 @@ static void apply_state_message(tsf* synth, const tml_message* msg) {
 }
 
 static void dispatch_message(MidiSession* session, const tml_message* msg) {
-    tsf* synth = session->synth;
+    fluid_synth_t* synth = session->synth;
+    int ch = (int)(unsigned char)msg->channel & 0x0F;
     switch (msg->type) {
         case TML_PROGRAM_CHANGE:
         case TML_CONTROL_CHANGE:
         case TML_PITCH_BEND:
+        case TML_CHANNEL_PRESSURE:
             apply_state_message(synth, msg);
             break;
+        case TML_KEY_PRESSURE: {
+            int key = transpose_key(ch, (int)(unsigned char)msg->key & 0x7F, session->transposeSemitones);
+            fluid_synth_key_pressure(synth, ch, key, (int)(unsigned char)msg->key_pressure & 0x7F);
+            break;
+        }
         case TML_NOTE_ON: {
-            int key = transpose_key(msg->channel, msg->key, session->transposeSemitones);
-            if (msg->velocity == 0) {
-                tsf_channel_note_off(synth, msg->channel, key);
+            int key = transpose_key(ch, (int)(unsigned char)msg->key & 0x7F, session->transposeSemitones);
+            int vel = (int)(unsigned char)msg->velocity & 0x7F;
+            if (vel == 0) {
+                fluid_synth_noteoff(synth, ch, key);
             } else {
-                tsf_channel_note_on(synth, msg->channel, key, (float)msg->velocity / 127.0f);
+                fluid_synth_noteon(synth, ch, key, vel);
             }
             break;
         }
         case TML_NOTE_OFF: {
-            int key = transpose_key(msg->channel, msg->key, session->transposeSemitones);
-            tsf_channel_note_off(synth, msg->channel, key);
+            int key = transpose_key(ch, (int)(unsigned char)msg->key & 0x7F, session->transposeSemitones);
+            fluid_synth_noteoff(synth, ch, key);
             break;
         }
         default:
@@ -117,25 +233,93 @@ Java_it_parrocchia_coro_audio_midi_NativeMidiSynth_nativeCreate(
     const char* path = (*env)->GetStringUTFChars(env, soundFontPath, NULL);
     if (!path) return 0L;
 
-    tsf* synth = tsf_load_filename(path);
-    (*env)->ReleaseStringUTFChars(env, soundFontPath, path);
-
-    if (!synth) {
-        LOGE("Impossibile caricare il SoundFont");
-        return 0L;
+    int sr = (sampleRate >= 22050 && sampleRate <= 96000) ? (int)sampleRate : 48000;
+    struct stat st;
+    off_t fileSize = 0;
+    time_t fileMtime = 0;
+    if (stat(path, &st) == 0) {
+        fileSize = st.st_size;
+        fileMtime = st.st_mtime;
     }
 
-    int sr = (sampleRate > 0) ? (int)sampleRate : 44100;
-    tsf_set_output(synth, TSF_STEREO_INTERLEAVED, sr, 0.0f);
-    tsf_set_max_voices(synth, 256);
-    reset_gm_channels(synth);
+    fluid_settings_t* settings = NULL;
+    fluid_synth_t* synth = NULL;
+    int ownsSynth = 0;
+
+    pthread_mutex_lock(&g_cache_mutex);
+    if (!g_cache_in_use) {
+        int cacheHit = (g_cached_synth != NULL) &&
+            (g_cached_sample_rate == sr) &&
+            (g_cached_file_size == fileSize) &&
+            (g_cached_file_mtime == fileMtime) &&
+            (strcmp(g_cached_path, path) == 0);
+
+        if (cacheHit) {
+            settings = g_cached_settings;
+            synth = g_cached_synth;
+            g_cache_in_use = 1;
+            int needsFlush = g_cache_dirty;
+            g_cache_dirty = 1;
+            pthread_mutex_unlock(&g_cache_mutex);
+
+            reset_gm_channels(synth);
+            if (needsFlush) {
+                flush_effects_tail(synth, sr);
+            }
+            LOGI("FluidSynth cache hit: %s @ %d Hz", path, sr);
+        } else {
+            /* Libera il vecchio banco prima di caricare il nuovo per ridurre il picco RAM */
+            free_cached_synth_locked();
+            g_cache_in_use = 1;
+            pthread_mutex_unlock(&g_cache_mutex);
+
+            if (!create_fluid_instance(path, sr, &settings, &synth)) {
+                pthread_mutex_lock(&g_cache_mutex);
+                g_cache_in_use = 0;
+                pthread_mutex_unlock(&g_cache_mutex);
+                (*env)->ReleaseStringUTFChars(env, soundFontPath, path);
+                return 0L;
+            }
+
+            pthread_mutex_lock(&g_cache_mutex);
+            g_cached_settings = settings;
+            g_cached_synth = synth;
+            strncpy(g_cached_path, path, MAX_SF_PATH - 1);
+            g_cached_path[MAX_SF_PATH - 1] = '\0';
+            g_cached_sample_rate = sr;
+            g_cached_file_size = fileSize;
+            g_cached_file_mtime = fileMtime;
+            g_cache_dirty = 1;
+            pthread_mutex_unlock(&g_cache_mutex);
+        }
+    } else {
+        /* Fallback nel caso raro di due sessioni sovrapposte: istanza dedicata */
+        pthread_mutex_unlock(&g_cache_mutex);
+        ownsSynth = 1;
+        if (!create_fluid_instance(path, sr, &settings, &synth)) {
+            (*env)->ReleaseStringUTFChars(env, soundFontPath, path);
+            return 0L;
+        }
+    }
+
+    (*env)->ReleaseStringUTFChars(env, soundFontPath, path);
 
     MidiSession* session = (MidiSession*)calloc(1, sizeof(MidiSession));
     if (!session) {
-        tsf_close(synth);
+        if (ownsSynth) {
+            delete_fluid_synth(synth);
+            delete_fluid_settings(settings);
+        } else {
+            pthread_mutex_lock(&g_cache_mutex);
+            g_cache_in_use = 0;
+            pthread_mutex_unlock(&g_cache_mutex);
+        }
         return 0L;
     }
+
+    session->settings = settings;
     session->synth = synth;
+    session->ownsSynth = ownsSynth;
     session->sampleRate = sr;
     session->endReachedAtMs = -1.0;
 
@@ -225,10 +409,10 @@ Java_it_parrocchia_coro_audio_midi_NativeMidiSynth_nativeSetTranspose(
 
     if (session->transposeSemitones != clamped) {
         session->transposeSemitones = clamped;
-        // Evita note bloccate quando si cambia tonalita' in anteprima
+        /* Evita note bloccate quando si cambia tonalita' in anteprima */
         for (int ch = 0; ch < 16; ch++) {
             if (ch != DRUM_CHANNEL) {
-                tsf_channel_note_off_all(session->synth, ch);
+                fluid_synth_all_notes_off(session->synth, ch);
             }
         }
     }
@@ -242,7 +426,7 @@ Java_it_parrocchia_coro_audio_midi_NativeMidiSynth_nativeAllNotesOff(
 ) {
     MidiSession* session = (MidiSession*)(intptr_t)handle;
     if (!session || !session->synth) return;
-    tsf_note_off_all(session->synth);
+    fluid_synth_all_notes_off(session->synth, -1);
 }
 
 JNIEXPORT jboolean JNICALL
@@ -283,7 +467,7 @@ Java_it_parrocchia_coro_audio_midi_NativeMidiSynth_nativeRender(
             session->currentMsg = session->currentMsg->next;
         }
 
-        tsf_render_float(session->synth, writePtr, block, 0);
+        fluid_synth_write_float(session->synth, block, writePtr, 0, 2, writePtr, 1, 2);
         writePtr += (block * 2);
         framesRemaining -= block;
     }
@@ -294,7 +478,7 @@ Java_it_parrocchia_coro_audio_midi_NativeMidiSynth_nativeRender(
         if (session->endReachedAtMs < 0.0) {
             session->endReachedAtMs = session->playbackTimeMs;
         }
-        int activeVoices = tsf_active_voice_count(session->synth);
+        int activeVoices = fluid_synth_get_active_voice_count(session->synth);
         double tailElapsed = session->playbackTimeMs - session->endReachedAtMs;
         if (activeVoices == 0 || tailElapsed >= MAX_TAIL_MS) {
             return JNI_TRUE;
@@ -328,11 +512,40 @@ Java_it_parrocchia_coro_audio_midi_NativeMidiSynth_nativeDestroy(
         tml_free(session->midiHead);
         session->midiHead = NULL;
     }
+
     if (session->synth) {
-        tsf_close(session->synth);
+        fluid_synth_all_sounds_off(session->synth, -1);
+        if (session->ownsSynth) {
+            delete_fluid_synth(session->synth);
+            if (session->settings) {
+                delete_fluid_settings(session->settings);
+            }
+        } else {
+            pthread_mutex_lock(&g_cache_mutex);
+            g_cache_in_use = 0;
+            pthread_mutex_unlock(&g_cache_mutex);
+        }
         session->synth = NULL;
+        session->settings = NULL;
     }
+
     free(session);
+}
+
+JNIEXPORT void JNICALL
+Java_it_parrocchia_coro_audio_midi_NativeMidiSynth_nativeClearSoundFontCache(
+    JNIEnv* env,
+    jobject thiz
+) {
+    pthread_mutex_lock(&g_cache_mutex);
+    if (!g_cache_in_use) {
+        free_cached_synth_locked();
+        LOGI("Cache SoundFont FluidSynth svuotata");
+    } else {
+        /* Se una riproduzione e' in corso, forza il ricaricamento alla prossima sessione */
+        g_cached_path[0] = '\0';
+    }
+    pthread_mutex_unlock(&g_cache_mutex);
 }
 
 JNIEXPORT jlong JNICALL

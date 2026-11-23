@@ -85,21 +85,21 @@ private data class RecommendedSoundFont(
 private val RecommendedSoundFonts = listOf(
     RecommendedSoundFont(
         name = "GeneralUser GS",
-        sizeLabel = "31 MB",
-        description = "Leggero e bilanciato — ideale su smartphone",
+        sizeLabel = "31 MB · .sf2",
+        description = "Leggero e bilanciato — sfrutta i modulatori di FluidSynth",
         downloadUrl = "https://github.com/mrbumpy409/GeneralUser-GS/raw/main/GeneralUser-GS.sf2"
     ),
     RecommendedSoundFont(
-        name = "FluidR3 GM",
-        sizeLabel = "142 MB",
-        description = "Classico MIT caldo su organo, piano e archi",
-        downloadUrl = "https://github.com/pianobooster/fluid-soundfont/releases/download/v3.1/FluidR3_GM.sf2"
+        name = "MuseScore General",
+        sizeLabel = "38 MB · .sf3",
+        description = "Suoni acustici e orchestrali ricchi in formato compatto (MIT)",
+        downloadUrl = "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3"
     ),
     RecommendedSoundFont(
-        name = "MuseScore General",
-        sizeLabel = "206 MB",
-        description = "Suoni acustici e orchestrali ricchi (MIT)",
-        downloadUrl = "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf2"
+        name = "FluidR3 GM",
+        sizeLabel = "142 MB · .sf2",
+        description = "Classico MIT caldo su organo, piano e archi",
+        downloadUrl = "https://github.com/pianobooster/fluid-soundfont/releases/download/v3.1/FluidR3_GM.sf2"
     )
 )
 
@@ -255,9 +255,9 @@ fun SettingsScreen(
                 }
             }
 
-            // 2. Banco suoni MIDI (SoundFont .sf2)
+            // 2. Banco suoni MIDI (FluidSynth .sf2 / .sf3)
             item(key = "soundfont", contentType = "settings_card") {
-                SettingsCard(title = "Sintetizzatore MIDI (.sf2)") {
+                SettingsCard(title = "Sintetizzatore FluidSynth (.sf2 / .sf3)") {
                     Text(
                         text = settings.customSoundFontName?.let { "Banco personalizzato: $it" }
                             ?: "Banco attivo: General MIDI (TimGM6mb.sf2)",
@@ -265,7 +265,7 @@ fun SettingsScreen(
                         color = CoroColors.Gold
                     )
                     Text(
-                        text = "Usa il banco General MIDI integrato oppure carica un file .sf2 per cambiare timbrica di organo e strumenti.",
+                        text = "Motore FluidSynth 2.6 con riverbero, chorus e 48 kHz nativo. Carica un file .sf2 o .sf3 per cambiare timbrica di organo e strumenti.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = CoroColors.TextSecondary
                     )
@@ -285,7 +285,7 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Carica .sf2",
+                                text = "Carica .sf2/.sf3",
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -310,7 +310,7 @@ fun SettingsScreen(
                     )
 
                     Text(
-                        text = "Banchi gratuiti consigliati (scarica .sf2 e poi premi Carica .sf2):",
+                        text = "Banchi gratuiti consigliati (scarica e poi premi Carica .sf2/.sf3):",
                         style = MaterialTheme.typography.bodyMedium,
                         color = CoroColors.TextSecondary
                     )

@@ -3,6 +3,7 @@ package it.parrocchia.coro.audio.midi
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat as AndroidAudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import android.net.Uri
 import android.os.Process
@@ -14,9 +15,10 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 
 /**
- * Motore di riproduzione MIDI basato su TinySoundFont + AudioTrack PCM Float Stereo.
+ * Motore di riproduzione MIDI basato su FluidSynth v2.6.2 + AudioTrack PCM Float Stereo
+ * al sample rate nativo del dispositivo (es. 48 kHz senza resampling di sistema).
  * Gestisce punto di attacco esatto, trasposizione (escludendo ch. 10 percussioni),
- * volume per brano, sfumatura fluida e micro-rampa anti-click sullo stop immediato.
+ * volume per brano, sfumatura fluida, limiter C¹ anti-clipping e micro-rampa anti-click.
  */
 class MidiAudioPlayer(private val context: Context) {
 
@@ -37,6 +39,9 @@ class MidiAudioPlayer(private val context: Context) {
     @Volatile
     private var targetVolume: Float = 1.0f
 
+    @Volatile
+    private var activeSampleRate: Int = DEFAULT_SAMPLE_RATE
+
     private val pendingTranspose = AtomicInteger(Int.MIN_VALUE)
     private val pendingSeekMs = AtomicLong(-1L)
 
@@ -51,7 +56,7 @@ class MidiAudioPlayer(private val context: Context) {
         stopImmediateSync()
 
         if (!NativeMidiSynth.isAvailable()) {
-            listener.onError("Sintetizzatore MIDI nativo non disponibile su questo dispositivo.")
+            listener.onError("Sintetizzatore MIDI FluidSynth non disponibile su questo dispositivo.")
             return
         }
 
@@ -61,6 +66,9 @@ class MidiAudioPlayer(private val context: Context) {
             listener.onError("Impossibile leggere il file MIDI: ${e.message ?: "errore I/O"}")
             return
         }
+
+        val sampleRate = resolveNativeSampleRate()
+        activeSampleRate = sampleRate
 
         stopRequested.set(false)
         isFadingOut.set(false)
@@ -75,6 +83,7 @@ class MidiAudioPlayer(private val context: Context) {
             runRenderLoop(
                 midiBytes = midiBytes,
                 soundFontPath = soundFontPath,
+                sampleRate = sampleRate,
                 startOffsetMs = startOffsetMs.coerceAtLeast(0L),
                 initialTranspose = transposeSemitones,
                 listener = listener
@@ -91,16 +100,16 @@ class MidiAudioPlayer(private val context: Context) {
         if (isFadingOut.get()) return
         val safeMs = durationMs.coerceAtLeast(100)
         fadeElapsedSamples.set(0L)
-        fadeDurationSamples.set((safeMs.toLong() * SAMPLE_RATE) / 1000L)
+        fadeDurationSamples.set((safeMs.toLong() * activeSampleRate) / 1000L)
         isFadingOut.set(true)
     }
 
     /**
-     * Stop immediato con micro-rampa anti-click (15 ms) per non produrre "pop"
+     * Stop immediato con micro-rampa anti-click (18 ms) per non produrre "pop"
      * sull'impianto audio della chiesa.
      */
     fun stopWithAntiClick() {
-        val microSamples = (ANTI_CLICK_STOP_MS * SAMPLE_RATE) / 1000L
+        val microSamples = (ANTI_CLICK_STOP_MS * activeSampleRate) / 1000L
         fadeElapsedSamples.set(0L)
         fadeDurationSamples.set(microSamples)
         isFadingOut.set(true)
@@ -137,13 +146,14 @@ class MidiAudioPlayer(private val context: Context) {
     private fun runRenderLoop(
         midiBytes: ByteArray,
         soundFontPath: String,
+        sampleRate: Int,
         startOffsetMs: Long,
         initialTranspose: Int,
         listener: Listener
     ) {
-        val handle = NativeMidiSynth.create(soundFontPath, SAMPLE_RATE)
+        val handle = NativeMidiSynth.create(soundFontPath, sampleRate)
         if (handle == 0L) {
-            listener.onError("Impossibile caricare il banco suoni SoundFont (.sf2).")
+            listener.onError("Impossibile caricare il banco suoni SoundFont (.sf2/.sf3).")
             return
         }
 
@@ -161,11 +171,12 @@ class MidiAudioPlayer(private val context: Context) {
             }
 
             val minBufBytes = AudioTrack.getMinBufferSize(
-                SAMPLE_RATE,
+                sampleRate,
                 AndroidAudioFormat.CHANNEL_OUT_STEREO,
                 AndroidAudioFormat.ENCODING_PCM_FLOAT
             )
-            val bufferBytes = max(minBufBytes * 2, BLOCK_FRAMES * 2 * 4 * 4)
+            // Buffer generoso (~85ms) per azzerare qualsiasi underrun/crackle in esecuzione live
+            val bufferBytes = max(minBufBytes * 3, BLOCK_FRAMES * 2 * 4 * 4)
 
             val track = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -176,20 +187,21 @@ class MidiAudioPlayer(private val context: Context) {
                 )
                 .setAudioFormat(
                     AndroidAudioFormat.Builder()
-                        .setSampleRate(SAMPLE_RATE)
+                        .setSampleRate(sampleRate)
                         .setEncoding(AndroidAudioFormat.ENCODING_PCM_FLOAT)
                         .setChannelMask(AndroidAudioFormat.CHANNEL_OUT_STEREO)
                         .build()
                 )
                 .setBufferSizeInBytes(bufferBytes)
                 .setTransferMode(AudioTrack.MODE_STREAM)
+                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
                 .build()
 
             audioTrack = track
             track.play()
 
             val pcm = FloatArray(BLOCK_FRAMES * 2)
-            val fadeInSamples = if (startOffsetMs > 0L) (ANTI_CLICK_FADE_IN_MS * SAMPLE_RATE) / 1000L else 0L
+            val fadeInSamples = if (startOffsetMs > 0L) (ANTI_CLICK_FADE_IN_MS * sampleRate) / 1000L else 0L
             var renderedFrames = 0L
             var smoothedGain = targetVolume
             var lastProgressEmitNs = 0L
@@ -292,9 +304,21 @@ class MidiAudioPlayer(private val context: Context) {
         }
     }
 
+    private fun resolveNativeSampleRate(): Int {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        val nativeRate = audioManager
+            ?.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
+            ?.toIntOrNull()
+        return if (nativeRate != null && nativeRate in 44100..96000) {
+            nativeRate
+        } else {
+            DEFAULT_SAMPLE_RATE
+        }
+    }
+
     companion object {
-        private const val SAMPLE_RATE = 44100
-        private const val BLOCK_FRAMES = 512
+        private const val DEFAULT_SAMPLE_RATE = 48000
+        private const val BLOCK_FRAMES = 1024
         private const val ANTI_CLICK_FADE_IN_MS = 12L
         private const val ANTI_CLICK_STOP_MS = 18L
         private const val PROGRESS_INTERVAL_NS = 60_000_000L // ~16 fps per UI fluida
