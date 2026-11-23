@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
@@ -57,6 +58,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
@@ -66,6 +68,8 @@ import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.components.HoldToConfirmSurface
 import it.parrocchia.coro.ui.theme.CoroColors
 import kotlin.math.roundToInt
+
+private val CompactButtonPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -142,24 +146,24 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .consumeWindowInsets(innerPadding),
             contentPadding = PaddingValues(
-                start = innerPadding.calculateStartPadding(layoutDirection) + 16.dp,
-                top = innerPadding.calculateTopPadding() + 16.dp,
-                end = innerPadding.calculateEndPadding(layoutDirection) + 16.dp,
+                start = innerPadding.calculateStartPadding(layoutDirection) + 12.dp,
+                top = innerPadding.calculateTopPadding() + 14.dp,
+                end = innerPadding.calculateEndPadding(layoutDirection) + 12.dp,
                 bottom = innerPadding.calculateBottomPadding() + 24.dp
             ),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalItemSpacing = 14.dp
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalItemSpacing = 12.dp
         ) {
             // 1. Cartella Libreria Musicale
             item(key = "library", contentType = "settings_card") {
-                SettingsCard(title = "Libreria musicale sul dispositivo") {
+                SettingsCard(title = "Libreria musicale") {
                     Text(
                         text = settings.libraryFolderName?.let { "Cartella attiva: $it" }
-                            ?: "Nessuna cartella collegata (in uso i brani di prova integrati)",
+                            ?: "Nessuna cartella collegata (in uso i brani di prova)",
                         style = MaterialTheme.typography.bodyLarge
                     )
                     Text(
-                        text = "Copia la cartella di file MIDI/KAR/MP3 dal PC sul dispositivo e selezionala qui. Anche le sottocartelle verranno indicizzate.",
+                        text = "Copia la cartella MIDI/KAR/MP3 sul dispositivo e selezionala qui. Anche le sottocartelle vengono indicizzate.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = CoroColors.TextSecondary
                     )
@@ -170,9 +174,14 @@ fun SettingsScreen(
                     ) {
                         Button(
                             onClick = { folderPicker.launch(null) },
-                            enabled = !isScanning
+                            enabled = !isScanning,
+                            contentPadding = CompactButtonPadding
                         ) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = null)
+                            Icon(
+                                imageVector = Icons.Default.FolderOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "Scegli cartella",
@@ -183,9 +192,14 @@ fun SettingsScreen(
                         if (settings.libraryFolderUri != null) {
                             OutlinedButton(
                                 onClick = onRescanLibrary,
-                                enabled = !isScanning
+                                enabled = !isScanning,
+                                contentPadding = CompactButtonPadding
                             ) {
-                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = "Aggiorna",
@@ -194,24 +208,31 @@ fun SettingsScreen(
                                 )
                             }
                         }
-                    }
-                    OutlinedButton(onClick = onReloadDemoTracks) {
-                        Text("Assicura brani di prova in libreria")
+                        OutlinedButton(
+                            onClick = onReloadDemoTracks,
+                            contentPadding = CompactButtonPadding
+                        ) {
+                            Text(
+                                text = "Brani di prova",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
 
             // 2. Banco suoni MIDI (SoundFont .sf2)
             item(key = "soundfont", contentType = "settings_card") {
-                SettingsCard(title = "Sintetizzatore MIDI (SoundFont .sf2)") {
+                SettingsCard(title = "Sintetizzatore MIDI (.sf2)") {
                     Text(
-                        text = settings.customSoundFontName?.let { "Banco suoni personalizzato: $it" }
-                            ?: "Banco suoni attivo: General MIDI integrato (TimGM6mb.sf2)",
+                        text = settings.customSoundFontName?.let { "Banco personalizzato: $it" }
+                            ?: "Banco attivo: General MIDI (TimGM6mb.sf2)",
                         style = MaterialTheme.typography.bodyLarge,
                         color = CoroColors.Gold
                     )
                     Text(
-                        text = "Puoi usare il banco General MIDI pronto all'uso oppure caricare un file .sf2 personalizzato per cambiare la timbrica di organo, piano e strumenti.",
+                        text = "Usa il banco General MIDI integrato oppure carica un file .sf2 per cambiare timbrica di organo e strumenti.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = CoroColors.TextSecondary
                     )
@@ -220,8 +241,15 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(onClick = { sf2Picker.launch(arrayOf("*/*")) }) {
-                            Icon(Icons.Default.MusicNote, contentDescription = null)
+                        Button(
+                            onClick = { sf2Picker.launch(arrayOf("*/*")) },
+                            contentPadding = CompactButtonPadding
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MusicNote,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "Carica .sf2",
@@ -230,9 +258,12 @@ fun SettingsScreen(
                             )
                         }
                         if (settings.customSoundFontLocalPath != null) {
-                            OutlinedButton(onClick = onResetSoundFont) {
+                            OutlinedButton(
+                                onClick = onResetSoundFont,
+                                contentPadding = CompactButtonPadding
+                            ) {
                                 Text(
-                                    text = "Ripristina integrato",
+                                    text = "Ripristina",
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -245,23 +276,10 @@ fun SettingsScreen(
             // 3. Protezione tocchi accidentali (durata pressione prolungata + area test)
             item(key = "hold_protection", contentType = "settings_card") {
                 SettingsCard(title = "Protezione tocchi accidentali") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Durata pressione prolungata",
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = "${settings.holdDurationMs} ms",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = CoroColors.Gold,
-                            maxLines = 1
-                        )
-                    }
+                    SettingSliderHeader(
+                        label = "Durata pressione",
+                        valueText = "${settings.holdDurationMs} ms"
+                    )
                     Slider(
                         value = settings.holdDurationMs.toFloat(),
                         onValueChange = { v ->
@@ -274,7 +292,7 @@ fun SettingsScreen(
                         valueRange = AppSettings.MIN_HOLD_DURATION_MS.toFloat()..AppSettings.MAX_HOLD_DURATION_MS.toFloat()
                     )
                     Text(
-                        text = "Prova qui sotto il tempo di pressione prima della messa:",
+                        text = "Prova il tempo di pressione prima della messa:",
                         style = MaterialTheme.typography.bodyMedium,
                         color = CoroColors.TextSecondary
                     )
@@ -286,24 +304,30 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 62.dp)
+                            .heightIn(min = 58.dp)
                     ) { _ ->
                         Row(
                             modifier = Modifier
                                 .align(Alignment.Center)
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            Icon(Icons.Default.TouchApp, contentDescription = null, tint = Color.White)
+                            Icon(
+                                imageVector = Icons.Default.TouchApp,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (testTriggers == 0)
-                                    "Tieni premuto per provare (${settings.holdDurationMs} ms)"
+                                    "Prova pressione (${settings.holdDurationMs} ms)"
                                 else
-                                    "Attivato! ($testTriggers) — riprova",
+                                    "Attivato ($testTriggers) — riprova",
                                 color = Color.White,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -313,23 +337,10 @@ fun SettingsScreen(
             // 4. Default nuovi brani & Schermo
             item(key = "general_prefs", contentType = "settings_card") {
                 SettingsCard(title = "Preferenze generali") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Sfumatura predefinita nuovi brani",
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = TrackSettings.formatFadeSec(settings.defaultFadeOutMs),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = CoroColors.Gold,
-                            maxLines = 1
-                        )
-                    }
+                    SettingSliderHeader(
+                        label = "Sfumatura predefinita",
+                        valueText = TrackSettings.formatFadeSec(settings.defaultFadeOutMs)
+                    )
                     Slider(
                         value = settings.defaultFadeOutMs.toFloat(),
                         onValueChange = { v ->
@@ -386,6 +397,32 @@ fun SettingsScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SettingSliderHeader(
+    label: String,
+    valueText: String
+) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(end = 12.dp)
+        )
+        Text(
+            text = valueText,
+            style = MaterialTheme.typography.titleMedium,
+            color = CoroColors.Gold,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+    }
+}
+
 @Composable
 private fun SettingsCard(
     title: String,
@@ -399,7 +436,7 @@ private fun SettingsCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
