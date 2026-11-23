@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -30,14 +31,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LibraryMusic
@@ -94,7 +98,9 @@ import it.parrocchia.coro.audio.PlaybackState
 import it.parrocchia.coro.data.db.MassPlanWithPhases
 import it.parrocchia.coro.data.db.PhaseWithTracks
 import it.parrocchia.coro.data.db.PlannedTrackWithSong
+import it.parrocchia.coro.data.repository.CoroRepository
 import it.parrocchia.coro.domain.model.AudioFormat
+import it.parrocchia.coro.domain.model.MassPreset
 import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.theme.CoroColors
 import kotlinx.coroutines.flow.StateFlow
@@ -103,6 +109,7 @@ import kotlinx.coroutines.flow.StateFlow
 @Composable
 fun PlannerScreen(
     massPlan: MassPlanWithPhases?,
+    savedTemplates: List<MassPlanWithPhases>,
     playbackStateFlow: StateFlow<PlaybackState>,
     playbackController: PlaybackController,
     onUpdateTitle: (planId: Long, newTitle: String) -> Unit,
@@ -114,11 +121,17 @@ fun PlannerScreen(
     onMoveTrack: (phaseId: Long, trackId: Long, moveUp: Boolean) -> Unit,
     onSaveTrackSettings: (trackId: Long, songId: Long, settings: TrackSettings, maxDurMs: Long, saveDefault: Boolean) -> Unit,
     onResetMass: (keepEnabledPhases: Boolean) -> Unit,
+    onApplyPreset: (preset: MassPreset, clearTracks: Boolean) -> Unit,
+    onSaveAsTemplate: (name: String) -> Unit,
+    onApplySavedTemplate: (templateId: Long, templateTitle: String) -> Unit,
+    onDeleteSavedTemplate: (templateId: Long) -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenSettings: () -> Unit,
     onEnterLiveMode: () -> Unit
 ) {
     var showPhasesSheet by rememberSaveable { mutableStateOf(false) }
+    var showPresetsSheet by rememberSaveable { mutableStateOf(false) }
+    var presetSheetClearTracksDefault by rememberSaveable { mutableStateOf(false) }
     var showResetDialog by rememberSaveable { mutableStateOf(false) }
     var showRenameDialog by rememberSaveable { mutableStateOf(false) }
     var editingTrackId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -153,6 +166,11 @@ fun PlannerScreen(
                     when (event.key) {
                         Key.N -> {
                             showResetDialog = true
+                            true
+                        }
+                        Key.P -> {
+                            presetSheetClearTracksDefault = false
+                            showPresetsSheet = true
                             true
                         }
                         Key.O -> {
@@ -292,21 +310,36 @@ fun PlannerScreen(
                     .padding(24.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     Text(
                         text = "Nessuna fase attiva per questa messa",
                         style = MaterialTheme.typography.titleLarge
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Button(onClick = { showPhasesSheet = true }) {
+                    Button(
+                        onClick = {
+                            presetSheetClearTracksDefault = false
+                            showPresetsSheet = true
+                        }
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scegli un preset di messa")
+                    }
+                    OutlinedButton(onClick = { showPhasesSheet = true }) {
                         Icon(Icons.Default.Checklist, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Configura fasi della messa")
+                        Text("Configura fasi manualmente")
                     }
                 }
             }
         } else {
             val layoutDirection = LocalLayoutDirection.current
+            val currentPresetName = remember(massPlan.plan.templateCategory) {
+                CoroRepository.resolvePresetDisplayName(massPlan.plan.templateCategory)
+            }
             LazyVerticalStaggeredGrid(
                 state = gridState,
                 columns = StaggeredGridCells.Adaptive(minSize = 340.dp),
@@ -322,6 +355,20 @@ fun PlannerScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalItemSpacing = 12.dp
             ) {
+                item(
+                    key = "preset_banner",
+                    span = StaggeredGridItemSpan.FullLine,
+                    contentType = "preset_banner"
+                ) {
+                    MassPresetBannerCard(
+                        presetName = currentPresetName,
+                        savedCount = savedTemplates.size,
+                        onClick = {
+                            presetSheetClearTracksDefault = false
+                            showPresetsSheet = true
+                        }
+                    )
+                }
                 items(
                     items = enabledPhases,
                     key = { it.phase.id },
@@ -374,6 +421,21 @@ fun PlannerScreen(
         )
     }
 
+    if (showPresetsSheet && massPlan != null) {
+        MassPresetsSheet(
+            activePresetId = massPlan.plan.templateCategory,
+            currentMassTitle = massPlan.plan.title,
+            hasCurrentTracks = totalPlannedTracks > 0,
+            initialClearTracks = presetSheetClearTracksDefault,
+            savedTemplates = savedTemplates,
+            onApplyPreset = onApplyPreset,
+            onSaveCurrentAsTemplate = onSaveAsTemplate,
+            onApplySavedTemplate = onApplySavedTemplate,
+            onDeleteSavedTemplate = onDeleteSavedTemplate,
+            onDismiss = { showPresetsSheet = false }
+        )
+    }
+
     if (showResetDialog) {
         var keepPhases by rememberSaveable { mutableStateOf(true) }
         AlertDialog(
@@ -390,6 +452,25 @@ fun PlannerScreen(
                         Checkbox(checked = keepPhases, onCheckedChange = { keepPhases = it })
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Mantieni le fasi attualmente attive")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            showResetDialog = false
+                            presetSheetClearTracksDefault = true
+                            showPresetsSheet = true
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 44.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.MenuBook,
+                            contentDescription = null,
+                            tint = CoroColors.Gold
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Parti da un preset di messa")
                     }
                 }
             },
@@ -606,6 +687,76 @@ private fun PhasePlannerCard(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MassPresetBannerCard(
+    presetName: String,
+    savedCount: Int,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = CoroColors.Surface),
+        border = BorderStroke(1.dp, CoroColors.Gold.copy(alpha = 0.45f)),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(CoroColors.GoldDim),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.MenuBook,
+                    contentDescription = null,
+                    tint = CoroColors.Gold
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (savedCount > 0) "PRESET MESSA · $savedCount salvati" else "PRESET MESSA",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = CoroColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = presetName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = CoroColors.Gold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = "Cambia",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = CoroColors.Gold,
+                    maxLines = 1
+                )
+                Icon(
+                    Icons.Default.ChevronRight,
+                    contentDescription = "Scegli preset di messa",
+                    tint = CoroColors.Gold
+                )
             }
         }
     }

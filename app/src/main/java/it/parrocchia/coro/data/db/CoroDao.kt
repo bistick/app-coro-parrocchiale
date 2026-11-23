@@ -57,7 +57,7 @@ interface CoroDao {
     @Query("DELETE FROM songs WHERE isDemo = 0")
     suspend fun deleteAllNonDemoSongs()
 
-    // --- Mass Plans ---
+    // --- Mass Plans & Saved Presets ---
     @Transaction
     @Query("SELECT * FROM mass_plans WHERE isActive = 1 AND isTemplate = 0 LIMIT 1")
     fun observeActiveMassPlan(): Flow<MassPlanWithPhases?>
@@ -66,14 +66,28 @@ interface CoroDao {
     @Query("SELECT * FROM mass_plans WHERE isActive = 1 AND isTemplate = 0 LIMIT 1")
     suspend fun getActiveMassPlanOnce(): MassPlanWithPhases?
 
+    @Transaction
+    @Query("SELECT * FROM mass_plans WHERE isTemplate = 1 ORDER BY updatedAtMs DESC")
+    fun observeSavedTemplates(): Flow<List<MassPlanWithPhases>>
+
+    @Transaction
+    @Query("SELECT * FROM mass_plans WHERE id = :planId LIMIT 1")
+    suspend fun getMassPlanByIdOnce(planId: Long): MassPlanWithPhases?
+
     @Insert
     suspend fun insertMassPlan(plan: MassPlanEntity): Long
 
     @Query("UPDATE mass_plans SET title = :title, updatedAtMs = :updatedAtMs WHERE id = :planId")
     suspend fun updateMassTitle(planId: Long, title: String, updatedAtMs: Long = System.currentTimeMillis())
 
+    @Query("UPDATE mass_plans SET templateCategory = :category, updatedAtMs = :updatedAtMs WHERE id = :planId")
+    suspend fun updateMassPresetId(planId: Long, category: String?, updatedAtMs: Long = System.currentTimeMillis())
+
     @Query("UPDATE mass_plans SET isActive = 0 WHERE isTemplate = 0")
     suspend fun deactivateAllMassPlans()
+
+    @Query("DELETE FROM mass_plans WHERE id = :planId")
+    suspend fun deleteMassPlan(planId: Long)
 
     // --- Phases ---
     @Insert
@@ -93,6 +107,9 @@ interface CoroDao {
 
     @Query("DELETE FROM mass_phases WHERE id = :phaseId")
     suspend fun deletePhase(phaseId: Long)
+
+    @Query("DELETE FROM mass_phases WHERE massPlanId = :planId AND phaseType = 'CUSTOM'")
+    suspend fun deleteCustomPhasesInPlan(planId: Long)
 
     @Query("SELECT COALESCE(MAX(sortOrder), 0) FROM mass_phases WHERE massPlanId = :planId")
     suspend fun getMaxPhaseOrder(planId: Long): Int

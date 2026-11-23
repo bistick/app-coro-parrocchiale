@@ -12,6 +12,8 @@ import it.parrocchia.coro.data.library.ScanSummary
 import it.parrocchia.coro.data.library.SoundFontManager
 import it.parrocchia.coro.data.prefs.AppSettings
 import it.parrocchia.coro.data.prefs.AppSettingsStore
+import it.parrocchia.coro.domain.model.MassPreset
+import it.parrocchia.coro.domain.model.MassPresetCatalog
 import it.parrocchia.coro.domain.model.StandardPhaseType
 import it.parrocchia.coro.domain.model.TrackSettings
 import kotlinx.coroutines.flow.Flow
@@ -28,6 +30,7 @@ class CoroRepository(
 ) {
     val allSongs: Flow<List<SongEntity>> = dao.observeAllSongs()
     val activeMassPlan: Flow<MassPlanWithPhases?> = dao.observeActiveMassPlan()
+    val savedTemplates: Flow<List<MassPlanWithPhases>> = dao.observeSavedTemplates()
     val appSettings: Flow<AppSettings> = settingsStore.settings
 
     /**
@@ -46,13 +49,17 @@ class CoroRepository(
         }
     }
 
-    private suspend fun createFreshActiveMassPlan(title: String): Long {
+    private suspend fun createFreshActiveMassPlan(
+        title: String,
+        preset: MassPreset? = null
+    ): Long {
         dao.deactivateAllMassPlans()
         val planId = dao.insertMassPlan(
             MassPlanEntity(
                 title = title,
                 dateEpochDay = LocalDate.now().toEpochDay(),
                 isTemplate = false,
+                templateCategory = preset?.id ?: MassPresetCatalog.DOMENICALE.id,
                 isActive = true
             )
         )
@@ -62,10 +69,19 @@ class CoroRepository(
                 phaseType = type.name,
                 customLabel = null,
                 sortOrder = type.defaultOrder,
-                isEnabled = type.defaultEnabled
+                isEnabled = if (preset != null) type in preset.enabledStandardPhases else type.defaultEnabled
             )
         }
-        dao.insertPhases(phases)
+        val customPhases = preset?.customPhases.orEmpty().map { cp ->
+            MassPhaseEntity(
+                massPlanId = planId,
+                phaseType = StandardPhaseType.CUSTOM.name,
+                customLabel = cp.label,
+                sortOrder = cp.sortOrder,
+                isEnabled = true
+            )
+        }
+        dao.insertPhases(phases + customPhases)
         return planId
     }
 
@@ -134,7 +150,177 @@ class CoroRepository(
                     dao.setPhaseEnabled(p.id, p.standardType.defaultEnabled)
                 }
             }
+            dao.updateMassPresetId(active.plan.id, MassPresetCatalog.DOMENICALE.id)
         }
+    }
+
+    suspend fun applyLiturgicalPreset(preset: MassPreset, clearTracks: Boolean) {
+        val active = dao.getActiveMassPlanOnce()
+        if (active == null) {
+            createFreshActiveMassPlan(
+                title = defaultMassTitle(prefix = preset.name),
+                preset = preset
+            )
+            return
+        }
+        val planId = active.plan.id
+        if (clearTracks) {
+            dao.clearAllTracksInPlan(planId)
+        }
+
+        val existingCustomByLabel = active.phases
+            .filter { it.phase.standardType == StandardPhaseType.CUSTOM }
+            .associateBy { it.phase.displayName.lowercase(Locale.ITALIAN) }
+        val targetCustomLabels = preset.customPhases
+            .map { it.label.lowercase(Locale.ITALIAN) }
+            .toSet()
+
+        for (phaseWithTracks in active.phases) {
+            val p = phaseWithTracks.phase
+            if (p.standardType == StandardPhaseType.CUSTOM) {
+                if (p.displayName.lowercase(Locale.ITALIAN) !in targetCustomLabels) {
+                    dao.deletePhase(p.id)
+                }
+            } else {
+                dao.setPhaseEnabled(p.id, p.standardType in preset.enabledStandardPhases)
+            }
+        }
+
+        val existingStandardTypes = active.phases.map { it.phase.standardType }.toSet()
+        val missingStandard = StandardPhaseType.standardPhases
+            .filter { it !in existingStandardTypes }
+            .map { type ->
+                MassPhaseEntity(
+                    massPlanId = planId,
+                    phaseType = type.name,
+                    customLabel = null,
+                    sortOrder = type.defaultOrder,
+                    isEnabled = type in preset.enabledStandardPhases
+                )
+            }
+        if (missingStandard.isNotEmpty()) {
+            dao.insertPhases(missingStandard)
+        }
+
+        val customToInsert = mutableListOf<MassPhaseEntity>()
+        for (cp in preset.customPhases) {
+            val existing = existingCustomByLabel[cp.label.lowercase(Locale.ITALIAN)]
+            if (existing != null) {
+                dao.setPhaseEnabled(existing.phase.id, true)
+                dao.updatePhaseSortOrder(existing.phase.id, cp.sortOrder)
+            } else {
+                customToInsert += MassPhaseEntity(
+                    massPlanId = planId,
+                    phaseType = StandardPhaseType.CUSTOM.name,
+                    customLabel = cp.label,
+                    sortOrder = cp.sortOrder,
+                    isEnabled = true
+                )
+            }
+        }
+        if (customToInsert.isNotEmpty()) {
+            dao.insertPhases(customToInsert)
+        }
+
+        dao.updateMassTitle(planId, defaultMassTitle(prefix = preset.name))
+        dao.updateMassPresetId(planId, preset.id)
+    }
+
+    suspend fun saveActivePlanAsTemplate(templateName: String): Long {
+        val cleaned = templateName.trim()
+        require(cleaned.isNotEmpty()) { "Il nome del preset non può essere vuoto" }
+        val active = dao.getActiveMassPlanOnce()
+            ?: error("Nessuna messa attiva da salvare come preset")
+
+        val templatePlanId = dao.insertMassPlan(
+            MassPlanEntity(
+                title = cleaned,
+                dateEpochDay = LocalDate.now().toEpochDay(),
+                isTemplate = true,
+                templateCategory = active.plan.templateCategory,
+                isActive = false
+            )
+        )
+
+        for (phaseWithTracks in active.orderedPhases) {
+            val p = phaseWithTracks.phase
+            val newPhaseId = dao.insertPhase(
+                MassPhaseEntity(
+                    massPlanId = templatePlanId,
+                    phaseType = p.phaseType,
+                    customLabel = p.customLabel,
+                    sortOrder = p.sortOrder,
+                    isEnabled = p.isEnabled,
+                    mixerConfigJson = p.mixerConfigJson
+                )
+            )
+            for (trackWithSong in phaseWithTracks.orderedTracks) {
+                val t = trackWithSong.track
+                dao.insertPlannedTrack(
+                    PlannedTrackEntity(
+                        phaseId = newPhaseId,
+                        songId = t.songId,
+                        sortOrder = t.sortOrder,
+                        fadeOutMs = t.fadeOutMs,
+                        startOffsetMs = t.startOffsetMs,
+                        transposeSemitones = t.transposeSemitones,
+                        volume = t.volume,
+                        playedInSession = false,
+                        mixerConfigJson = t.mixerConfigJson
+                    )
+                )
+            }
+        }
+        return templatePlanId
+    }
+
+    suspend fun applySavedTemplate(templateId: Long) {
+        val template = dao.getMassPlanByIdOnce(templateId) ?: return
+        dao.deactivateAllMassPlans()
+
+        val newPlanId = dao.insertMassPlan(
+            MassPlanEntity(
+                title = defaultMassTitle(prefix = template.plan.title),
+                dateEpochDay = LocalDate.now().toEpochDay(),
+                isTemplate = false,
+                templateCategory = "$CUSTOM_TEMPLATE_PREFIX${template.plan.title}",
+                isActive = true
+            )
+        )
+
+        for (phaseWithTracks in template.orderedPhases) {
+            val p = phaseWithTracks.phase
+            val newPhaseId = dao.insertPhase(
+                MassPhaseEntity(
+                    massPlanId = newPlanId,
+                    phaseType = p.phaseType,
+                    customLabel = p.customLabel,
+                    sortOrder = p.sortOrder,
+                    isEnabled = p.isEnabled,
+                    mixerConfigJson = p.mixerConfigJson
+                )
+            )
+            for (trackWithSong in phaseWithTracks.orderedTracks) {
+                val t = trackWithSong.track
+                dao.insertPlannedTrack(
+                    PlannedTrackEntity(
+                        phaseId = newPhaseId,
+                        songId = t.songId,
+                        sortOrder = t.sortOrder,
+                        fadeOutMs = t.fadeOutMs,
+                        startOffsetMs = t.startOffsetMs,
+                        transposeSemitones = t.transposeSemitones,
+                        volume = t.volume,
+                        playedInSession = false,
+                        mixerConfigJson = t.mixerConfigJson
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun deleteSavedTemplate(templateId: Long) {
+        dao.deleteMassPlan(templateId)
     }
 
     suspend fun togglePhaseEnabled(phaseId: Long, enabled: Boolean) {
@@ -255,10 +441,23 @@ class CoroRepository(
     suspend fun setKeepScreenOnInLive(enabled: Boolean) = settingsStore.setKeepScreenOnInLive(enabled)
 
     companion object {
-        fun defaultMassTitle(date: LocalDate = LocalDate.now()): String {
+        const val CUSTOM_TEMPLATE_PREFIX = "custom:"
+
+        fun defaultMassTitle(
+            date: LocalDate = LocalDate.now(),
+            prefix: String = "Messa"
+        ): String {
             val formatter = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.ITALIAN)
             val formatted = date.format(formatter).replaceFirstChar { it.uppercaseChar() }
-            return "Messa · $formatted"
+            return "$prefix · $formatted"
+        }
+
+        fun resolvePresetDisplayName(templateCategory: String?): String {
+            if (templateCategory.isNullOrBlank()) return "Personalizzata"
+            if (templateCategory.startsWith(CUSTOM_TEMPLATE_PREFIX)) {
+                return templateCategory.removePrefix(CUSTOM_TEMPLATE_PREFIX).ifBlank { "Personalizzata" }
+            }
+            return MassPresetCatalog.findById(templateCategory)?.name ?: "Personalizzata"
         }
     }
 }

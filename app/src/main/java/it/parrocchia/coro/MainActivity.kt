@@ -93,6 +93,7 @@ class MainActivity : ComponentActivity() {
                 "Programmazione Messa",
                 listOf(
                     KeyboardShortcutInfo("Nuova messa", KeyEvent.KEYCODE_N, KeyEvent.META_CTRL_ON),
+                    KeyboardShortcutInfo("Preset di messa", KeyEvent.KEYCODE_P, KeyEvent.META_CTRL_ON),
                     KeyboardShortcutInfo("Apri libreria", KeyEvent.KEYCODE_O, KeyEvent.META_CTRL_ON),
                     KeyboardShortcutInfo("Avvia esecuzione live", KeyEvent.KEYCODE_ENTER, KeyEvent.META_CTRL_ON)
                 )
@@ -134,6 +135,7 @@ private fun CoroRootApp(
     val snackbarHostState = remember { SnackbarHostState() }
 
     val massPlan by viewModel.activeMassPlan.collectAsStateWithLifecycle()
+    val savedTemplates by viewModel.savedTemplates.collectAsStateWithLifecycle()
     val songs by viewModel.songs.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
@@ -169,6 +171,7 @@ private fun CoroRootApp(
                 composable(Routes.PLANNER) {
                     PlannerScreen(
                         massPlan = massPlan,
+                        savedTemplates = savedTemplates,
                         playbackStateFlow = viewModel.playbackState,
                         playbackController = viewModel.playbackController,
                         onUpdateTitle = viewModel::updateMassTitle,
@@ -182,6 +185,10 @@ private fun CoroRootApp(
                         onMoveTrack = viewModel::moveTrack,
                         onSaveTrackSettings = viewModel::savePlannedTrackSettings,
                         onResetMass = viewModel::resetMass,
+                        onApplyPreset = viewModel::applyLiturgicalPreset,
+                        onSaveAsTemplate = viewModel::saveCurrentMassAsTemplate,
+                        onApplySavedTemplate = viewModel::applySavedTemplate,
+                        onDeleteSavedTemplate = viewModel::deleteSavedTemplate,
                         onOpenLibrary = { navController.navigate(Routes.LIBRARY_BASE) },
                         onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                         onEnterLiveMode = {

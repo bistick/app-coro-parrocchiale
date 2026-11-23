@@ -12,6 +12,7 @@ import it.parrocchia.coro.data.db.PlannedTrackWithSong
 import it.parrocchia.coro.data.db.SongEntity
 import it.parrocchia.coro.data.prefs.AppSettings
 import it.parrocchia.coro.data.repository.CoroRepository
+import it.parrocchia.coro.domain.model.MassPreset
 import it.parrocchia.coro.domain.model.TrackSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -27,6 +28,9 @@ class CoroViewModel(
 
     val activeMassPlan: StateFlow<MassPlanWithPhases?> = repository.activeMassPlan
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val savedTemplates: StateFlow<List<MassPlanWithPhases>> = repository.savedTemplates
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val songs: StateFlow<List<SongEntity>> = repository.allSongs
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -68,6 +72,43 @@ class CoroViewModel(
             playbackController.stopPreviewIfActive()
             repository.resetMassForNewDay(keepEnabledPhases)
             postToast("Scaletta azzerata per la nuova messa")
+        }
+    }
+
+    fun applyLiturgicalPreset(preset: MassPreset, clearTracks: Boolean) {
+        viewModelScope.launch {
+            playbackController.stopPreviewIfActive()
+            repository.applyLiturgicalPreset(preset, clearTracks)
+            postToast("Preset applicato: ${preset.name}")
+        }
+    }
+
+    fun saveCurrentMassAsTemplate(name: String) {
+        val cleaned = name.trim()
+        if (cleaned.isEmpty()) return
+        viewModelScope.launch {
+            runCatching {
+                repository.saveActivePlanAsTemplate(cleaned)
+            }.onSuccess {
+                postToast("Preset salvato: $cleaned")
+            }.onFailure { err ->
+                postToast(err.message ?: "Impossibile salvare il preset")
+            }
+        }
+    }
+
+    fun applySavedTemplate(templateId: Long, templateTitle: String) {
+        viewModelScope.launch {
+            playbackController.stopPreviewIfActive()
+            repository.applySavedTemplate(templateId)
+            postToast("Preset caricato: $templateTitle")
+        }
+    }
+
+    fun deleteSavedTemplate(templateId: Long) {
+        viewModelScope.launch {
+            repository.deleteSavedTemplate(templateId)
+            postToast("Preset eliminato")
         }
     }
 
