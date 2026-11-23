@@ -14,13 +14,25 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -76,6 +88,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -215,6 +228,7 @@ fun LiveExecutionScreen(
                 }
             },
         containerColor = CoroColors.Background,
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             LiveTopHeader(
                 title = massPlan?.plan?.title ?: "Esecuzione Live",
@@ -239,20 +253,30 @@ fun LiveExecutionScreen(
             }
         }
     ) { innerPadding ->
+        val layoutDirection = LocalLayoutDirection.current
+        val hasError = playbackState.status == PlaybackStatus.ERROR && playbackState.errorMessage != null
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
         ) {
-            if (playbackState.status == PlaybackStatus.ERROR && playbackState.errorMessage != null) {
+            if (hasError) {
                 Surface(
                     color = CoroColors.StopRed,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = innerPadding.calculateTopPadding())
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                            .padding(
+                                start = innerPadding.calculateStartPadding(layoutDirection) + 16.dp,
+                                end = innerPadding.calculateEndPadding(layoutDirection) + 16.dp,
+                                top = 10.dp,
+                                bottom = 10.dp
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -269,11 +293,18 @@ fun LiveExecutionScreen(
                 }
             }
 
+            val contentTopPadding = if (hasError) 0.dp else innerPadding.calculateTopPadding()
+
             if (isWideLayout) {
+                val edgePad = if (isCompactHeight) 10.dp else 16.dp
                 Row(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(if (isCompactHeight) 10.dp else 16.dp),
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(
+                            start = innerPadding.calculateStartPadding(layoutDirection) + edgePad,
+                            end = innerPadding.calculateEndPadding(layoutDirection) + edgePad
+                        ),
                     horizontalArrangement = Arrangement.spacedBy(if (isCompactHeight) 12.dp else 16.dp)
                 ) {
                     LiveTrackList(
@@ -282,6 +313,10 @@ fun LiveExecutionScreen(
                         playbackState = playbackState,
                         holdDurationMs = settings.holdDurationMs,
                         onPlayTrack = onPlayTrack,
+                        contentPadding = PaddingValues(
+                            top = contentTopPadding + edgePad,
+                            bottom = innerPadding.calculateBottomPadding() + edgePad + 8.dp
+                        ),
                         modifier = Modifier
                             .weight(1.35f)
                             .fillMaxHeight()
@@ -297,6 +332,10 @@ fun LiveExecutionScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .padding(
+                                top = contentTopPadding + edgePad,
+                                bottom = innerPadding.calculateBottomPadding() + edgePad
+                            )
                     )
                 }
             } else {
@@ -306,9 +345,15 @@ fun LiveExecutionScreen(
                     playbackState = playbackState,
                     holdDurationMs = settings.holdDurationMs,
                     onPlayTrack = onPlayTrack,
+                    contentPadding = PaddingValues(
+                        start = innerPadding.calculateStartPadding(layoutDirection) + 14.dp,
+                        end = innerPadding.calculateEndPadding(layoutDirection) + 14.dp,
+                        top = contentTopPadding + 10.dp,
+                        bottom = innerPadding.calculateBottomPadding() + 20.dp
+                    ),
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .weight(1f)
+                        .fillMaxWidth()
                 )
             }
         }
@@ -327,7 +372,15 @@ private fun LiveTopHeader(
     onExitLiveMode: () -> Unit
 ) {
     Surface(color = CoroColors.Surface, tonalElevation = 4.dp) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(
+                    WindowInsets.statusBars.union(
+                        WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+                    )
+                )
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -452,6 +505,7 @@ private fun LiveTrackList(
     playbackState: PlaybackState,
     holdDurationMs: Int,
     onPlayTrack: (String, PlannedTrackWithSong) -> Unit,
+    contentPadding: PaddingValues,
     modifier: Modifier = Modifier
 ) {
     val isAnyLiveBusy = !playbackState.isPreview && playbackState.isBusy
@@ -461,7 +515,7 @@ private fun LiveTrackList(
         state = listState,
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(bottom = 20.dp)
+        contentPadding = contentPadding
     ) {
         items(entries, key = { it.item.track.id }) { entry ->
             val track = entry.item.track
@@ -633,6 +687,11 @@ private fun LiveBottomTransportBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .windowInsetsPadding(
+                    WindowInsets.navigationBars.union(
+                        WindowInsets.displayCutout.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+                    )
+                )
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {

@@ -2,14 +2,17 @@ package it.parrocchia.coro.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -49,6 +52,7 @@ fun ConfigurePhasesSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val listState = rememberLazyListState()
     var customName by rememberSaveable { mutableStateOf("") }
 
     val grouped = remember(phases) {
@@ -66,8 +70,8 @@ fun ConfigurePhasesSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp)
         ) {
             Text(
                 text = "Fasi della Messa",
@@ -113,10 +117,11 @@ fun ConfigurePhasesSheet(
             HorizontalDivider(color = CoroColors.Border)
 
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false)
-                    .padding(top = 8.dp),
+                    .weight(1f, fill = false),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 grouped.forEach { (section, sectionPhases) ->
