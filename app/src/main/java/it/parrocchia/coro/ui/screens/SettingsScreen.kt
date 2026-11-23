@@ -5,8 +5,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,7 +17,7 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
@@ -56,6 +57,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import it.parrocchia.coro.BuildConfig
@@ -65,7 +67,7 @@ import it.parrocchia.coro.ui.components.HoldToConfirmSurface
 import it.parrocchia.coro.ui.theme.CoroColors
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     settings: AppSettings,
@@ -111,7 +113,14 @@ fun SettingsScreen(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
-                title = { Text("Impostazioni", fontWeight = FontWeight.Bold) },
+                title = {
+                    Text(
+                        text = "Impostazioni",
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Indietro")
@@ -154,14 +163,22 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = CoroColors.TextSecondary
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Button(
                             onClick = { folderPicker.launch(null) },
                             enabled = !isScanning
                         ) {
                             Icon(Icons.Default.FolderOpen, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Scegli cartella")
+                            Text(
+                                text = "Scegli cartella",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                         if (settings.libraryFolderUri != null) {
                             OutlinedButton(
@@ -170,7 +187,11 @@ fun SettingsScreen(
                             ) {
                                 Icon(Icons.Default.Refresh, contentDescription = null)
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Aggiorna")
+                                Text(
+                                    text = "Aggiorna",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
@@ -194,15 +215,27 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = CoroColors.TextSecondary
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Button(onClick = { sf2Picker.launch(arrayOf("*/*")) }) {
                             Icon(Icons.Default.MusicNote, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Carica .sf2")
+                            Text(
+                                text = "Carica .sf2",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                         if (settings.customSoundFontLocalPath != null) {
                             OutlinedButton(onClick = onResetSoundFont) {
-                                Text("Ripristina integrato")
+                                Text(
+                                    text = "Ripristina integrato",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
@@ -214,14 +247,19 @@ fun SettingsScreen(
                 SettingsCard(title = "Protezione tocchi accidentali") {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Durata pressione prolungata", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = "Durata pressione prolungata",
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
                         Text(
                             text = "${settings.holdDurationMs} ms",
                             style = MaterialTheme.typography.titleMedium,
-                            color = CoroColors.Gold
+                            color = CoroColors.Gold,
+                            maxLines = 1
                         )
                     }
                     Slider(
@@ -248,24 +286,25 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(62.dp)
+                            .heightIn(min = 62.dp)
                     ) { _ ->
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.TouchApp, contentDescription = null, tint = Color.White)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (testTriggers == 0)
-                                        "Tieni premuto per provare (${settings.holdDurationMs} ms)"
-                                    else
-                                        "Attivato! ($testTriggers) — riprova",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            Icon(Icons.Default.TouchApp, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (testTriggers == 0)
+                                    "Tieni premuto per provare (${settings.holdDurationMs} ms)"
+                                else
+                                    "Attivato! ($testTriggers) — riprova",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -276,14 +315,19 @@ fun SettingsScreen(
                 SettingsCard(title = "Preferenze generali") {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Sfumatura predefinita nuovi brani", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = "Sfumatura predefinita nuovi brani",
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
                         Text(
                             text = TrackSettings.formatFadeSec(settings.defaultFadeOutMs),
                             style = MaterialTheme.typography.titleMedium,
-                            color = CoroColors.Gold
+                            color = CoroColors.Gold,
+                            maxLines = 1
                         )
                     }
                     Slider(
@@ -300,6 +344,7 @@ fun SettingsScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {

@@ -163,11 +163,22 @@ private fun LiveExecutionScreenFormFactorPreview() {
 }
 
 @FormFactorPreviews
+@Preview(
+    name = "Phone Large Font",
+    device = "spec:width=390dp,height=867dp",
+    fontScale = 1.6f,
+    showBackground = true
+)
 @Composable
 private fun SettingsScreenFormFactorPreview() {
     CoroTheme {
         SettingsScreen(
-            settings = AppSettings(libraryFolderName = "Canti Parrocchia"),
+            settings = AppSettings(
+                libraryFolderUri = "content://demo/Midi",
+                libraryFolderName = "Midi",
+                customSoundFontName = "OrganoCattedrale.sf2",
+                customSoundFontLocalPath = "/data/OrganoCattedrale.sf2"
+            ),
             isScanning = false,
             onSelectLibraryFolder = { _, _ -> },
             onRescanLibrary = {},
