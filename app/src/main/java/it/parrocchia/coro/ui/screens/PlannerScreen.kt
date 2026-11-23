@@ -2,6 +2,7 @@ package it.parrocchia.coro.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +17,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -51,13 +54,26 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -89,15 +105,61 @@ fun PlannerScreen(
     onOpenSettings: () -> Unit,
     onEnterLiveMode: () -> Unit
 ) {
-    var showPhasesSheet by remember { mutableStateOf(false) }
-    var showResetDialog by remember { mutableStateOf(false) }
-    var showRenameDialog by remember { mutableStateOf(false) }
-    var editingTrack by remember { mutableStateOf<PlannedTrackWithSong?>(null) }
+    var showPhasesSheet by rememberSaveable { mutableStateOf(false) }
+    var showResetDialog by rememberSaveable { mutableStateOf(false) }
+    var showRenameDialog by rememberSaveable { mutableStateOf(false) }
+    var editingTrackId by rememberSaveable { mutableStateOf<Long?>(null) }
+
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    val gridState = rememberLazyStaggeredGridState()
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
 
     val enabledPhases = massPlan?.enabledPhases.orEmpty()
     val totalPlannedTracks = remember(enabledPhases) { enabledPhases.sumOf { it.tracks.size } }
+    val editingTrack = remember(enabledPhases, editingTrackId) {
+        val id = editingTrackId ?: return@remember null
+        enabledPhases.asSequence()
+            .flatMap { it.tracks.asSequence() }
+            .firstOrNull { it.track.id == id }
+    }
 
     Scaffold(
+        modifier = Modifier
+            .nestedScroll(scrollBehavior.nestedScrollConnection)
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown || event.nativeKeyEvent.repeatCount > 0) {
+                    return@onPreviewKeyEvent false
+                }
+                if (event.isCtrlPressed && !event.isAltPressed && !event.isShiftPressed) {
+                    when (event.key) {
+                        Key.N -> {
+                            showResetDialog = true
+                            true
+                        }
+                        Key.O -> {
+                            onOpenLibrary()
+                            true
+                        }
+                        Key.Enter -> {
+                            if (totalPlannedTracks > 0) {
+                                onEnterLiveMode()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        else -> false
+                    }
+                } else {
+                    false
+                }
+            },
         containerColor = CoroColors.Background,
         topBar = {
             TopAppBar(
@@ -139,7 +201,11 @@ fun PlannerScreen(
                         Icon(Icons.Default.Settings, contentDescription = "Impostazioni")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = CoroColors.Surface)
+                scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = CoroColors.Surface,
+                    scrolledContainerColor = CoroColors.Surface
+                )
             )
         },
         bottomBar = {
@@ -219,12 +285,15 @@ fun PlannerScreen(
                 }
             }
         } else {
-            LazyColumn(
+            LazyVerticalStaggeredGrid(
+                state = gridState,
+                columns = StaggeredGridCells.Adaptive(minSize = 340.dp),
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalItemSpacing = 12.dp
             ) {
                 items(enabledPhases, key = { it.phase.id }) { phaseWithTracks ->
                     PhasePlannerCard(
@@ -232,7 +301,7 @@ fun PlannerScreen(
                         onAddSong = {
                             onAddSongForPhase(phaseWithTracks.phase.id, phaseWithTracks.phase.displayName)
                         },
-                        onEditTrack = { editingTrack = it },
+                        onEditTrack = { editingTrackId = it.track.id },
                         onRemoveTrack = onRemoveTrack,
                         onMoveTrack = { trackId, up ->
                             onMoveTrack(phaseWithTracks.phase.id, trackId, up)
@@ -268,14 +337,14 @@ fun PlannerScreen(
                     item.song.durationMs,
                     saveDefault
                 )
-                editingTrack = null
+                editingTrackId = null
             },
-            onDismiss = { editingTrack = null }
+            onDismiss = { editingTrackId = null }
         )
     }
 
     if (showResetDialog) {
-        var keepPhases by remember { mutableStateOf(true) }
+        var keepPhases by rememberSaveable { mutableStateOf(true) }
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
             containerColor = CoroColors.Surface,
@@ -313,7 +382,7 @@ fun PlannerScreen(
     }
 
     if (showRenameDialog && massPlan != null) {
-        var draftTitle by remember(massPlan.plan.title) { mutableStateOf(massPlan.plan.title) }
+        var draftTitle by rememberSaveable(massPlan.plan.title) { mutableStateOf(massPlan.plan.title) }
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
             containerColor = CoroColors.Surface,

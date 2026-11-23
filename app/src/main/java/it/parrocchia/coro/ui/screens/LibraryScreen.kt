@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,12 +14,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -42,13 +46,26 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -78,10 +95,28 @@ fun LibraryScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    var query by remember { mutableStateOf("") }
-    var formatFilter by remember { mutableStateOf<AudioFormat?>(null) }
-    var folderFilter by remember { mutableStateOf<String?>(null) }
-    var editingSong by remember { mutableStateOf<SongEntity?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var formatFilterName by rememberSaveable { mutableStateOf<String?>(null) }
+    var folderFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var editingSongId by rememberSaveable { mutableStateOf<Long?>(null) }
+
+    val formatFilter = remember(formatFilterName) {
+        formatFilterName?.let { AudioFormat.fromCode(it) }
+    }
+    val editingSong = remember(songs, editingSongId) {
+        val id = editingSongId ?: return@remember null
+        songs.firstOrNull { it.id == id }
+    }
+
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    val gridState = rememberLazyGridState()
+    val filterRowState = rememberLazyListState()
+    val containerFocusRequester = remember { FocusRequester() }
+    val searchFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        containerFocusRequester.requestFocus()
+    }
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -113,6 +148,43 @@ fun LibraryScreen(
     }
 
     Scaffold(
+        modifier = Modifier
+            .nestedScroll(scrollBehavior.nestedScrollConnection)
+            .focusRequester(containerFocusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown || event.nativeKeyEvent.repeatCount > 0) {
+                    return@onPreviewKeyEvent false
+                }
+                when {
+                    event.isCtrlPressed && !event.isAltPressed && !event.isShiftPressed && event.key == Key.F -> {
+                        searchFocusRequester.requestFocus()
+                        true
+                    }
+                    ((event.isCtrlPressed && !event.isAltPressed && !event.isShiftPressed && event.key == Key.R) ||
+                        event.key == Key.F5) -> {
+                        if (settings.libraryFolderUri != null && !isScanning) {
+                            onRescanFolder()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    event.isCtrlPressed && !event.isAltPressed && !event.isShiftPressed && event.key == Key.O -> {
+                        if (!isScanning) {
+                            folderPickerLauncher.launch(null)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    event.key == Key.Escape && query.isNotEmpty() -> {
+                        query = ""
+                        true
+                    }
+                    else -> false
+                }
+            },
         containerColor = CoroColors.Background,
         topBar = {
             TopAppBar(
@@ -146,7 +218,11 @@ fun LibraryScreen(
                         Icon(Icons.Default.FolderOpen, contentDescription = "Scegli cartella")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = CoroColors.Surface)
+                scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = CoroColors.Surface,
+                    scrolledContainerColor = CoroColors.Surface
+                )
             )
         }
     ) { innerPadding ->
@@ -206,34 +282,43 @@ fun LibraryScreen(
                 placeholder = { Text("Cerca canto o sottocartella...") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(searchFocusRequester)
             )
 
             // Filtri formato e sottocartelle
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item {
+            LazyRow(
+                state = filterRowState,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item(key = "filter_all") {
                     FilterChip(
                         selected = formatFilter == null,
-                        onClick = { formatFilter = null },
+                        onClick = { formatFilterName = null },
                         label = { Text("Tutti (${songs.size})") }
                     )
                 }
-                item {
+                item(key = "filter_midi") {
                     FilterChip(
                         selected = formatFilter == AudioFormat.MIDI,
-                        onClick = { formatFilter = if (formatFilter == AudioFormat.MIDI) null else AudioFormat.MIDI },
+                        onClick = {
+                            formatFilterName = if (formatFilter == AudioFormat.MIDI) null else AudioFormat.MIDI.name
+                        },
                         label = { Text("MIDI") }
                     )
                 }
-                item {
+                item(key = "filter_audio") {
                     FilterChip(
                         selected = formatFilter == AudioFormat.AUDIO,
-                        onClick = { formatFilter = if (formatFilter == AudioFormat.AUDIO) null else AudioFormat.AUDIO },
+                        onClick = {
+                            formatFilterName = if (formatFilter == AudioFormat.AUDIO) null else AudioFormat.AUDIO.name
+                        },
                         label = { Text("MP3 / Audio") }
                     )
                 }
                 if (folders.size > 1) {
-                    items(folders) { folder ->
+                    items(folders, key = { "folder_$it" }) { folder ->
                         FilterChip(
                             selected = folderFilter == folder,
                             onClick = { folderFilter = if (folderFilter == folder) null else folder },
@@ -257,8 +342,11 @@ fun LibraryScreen(
                     )
                 }
             } else {
-                LazyColumn(
+                LazyVerticalGrid(
+                    state = gridState,
+                    columns = GridCells.Adaptive(minSize = 320.dp),
                     modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
@@ -270,10 +358,10 @@ fun LibraryScreen(
                                 if (onPickSongForPhase != null) {
                                     onPickSongForPhase(song)
                                 } else {
-                                    editingSong = song
+                                    editingSongId = song.id
                                 }
                             },
-                            onEditDefaults = { editingSong = song }
+                            onEditDefaults = { editingSongId = song.id }
                         )
                     }
                 }
@@ -290,9 +378,9 @@ fun LibraryScreen(
             playbackController = playbackController,
             onSave = { newSettings, _ ->
                 onSaveSongDefaults(song, newSettings)
-                editingSong = null
+                editingSongId = null
             },
-            onDismiss = { editingSong = null }
+            onDismiss = { editingSongId = null }
         )
     }
 }

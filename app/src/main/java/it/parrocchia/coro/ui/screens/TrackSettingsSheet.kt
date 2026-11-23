@@ -38,7 +38,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,11 +66,19 @@ fun TrackSettingsSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    var fadeOutMs by remember(song.id, initialSettings) { mutableIntStateOf(initialSettings.fadeOutMs) }
-    var startOffsetMs by remember(song.id, initialSettings) { mutableLongStateOf(initialSettings.startOffsetMs) }
-    var transpose by remember(song.id, initialSettings) { mutableIntStateOf(initialSettings.transposeSemitones) }
-    var volume by remember(song.id, initialSettings) { mutableFloatStateOf(initialSettings.volume) }
-    var saveAsDefault by remember(song.id) { mutableStateOf(true) }
+    var fadeOutMs by rememberSaveable(song.id, initialSettings.fadeOutMs) {
+        mutableIntStateOf(initialSettings.fadeOutMs)
+    }
+    var startOffsetMs by rememberSaveable(song.id, initialSettings.startOffsetMs) {
+        mutableLongStateOf(initialSettings.startOffsetMs)
+    }
+    var transpose by rememberSaveable(song.id, initialSettings.transposeSemitones) {
+        mutableIntStateOf(initialSettings.transposeSemitones)
+    }
+    var volume by rememberSaveable(song.id, initialSettings.volume) {
+        mutableFloatStateOf(initialSettings.volume)
+    }
+    var saveAsDefault by rememberSaveable(song.id) { mutableStateOf(true) }
 
     val isPreviewPlayingThisSong = playbackState.isPreview &&
         playbackState.songId == song.id &&

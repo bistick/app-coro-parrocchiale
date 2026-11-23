@@ -7,6 +7,7 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +23,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
@@ -45,6 +49,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.windowsizeclass.WindowHeightSizeClass
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -53,11 +59,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,7 +102,7 @@ fun LiveExecutionScreen(
     massPlan: MassPlanWithPhases?,
     settings: AppSettings,
     playbackState: PlaybackState,
-    windowWidthSizeClass: WindowWidthSizeClass,
+    windowSizeClass: WindowSizeClass,
     onPlayTrack: (phaseLabel: String, item: PlannedTrackWithSong) -> Unit,
     onFadeOut: () -> Unit,
     onStopImmediate: () -> Unit,
@@ -94,7 +111,12 @@ fun LiveExecutionScreen(
     onExitLiveMode: () -> Unit
 ) {
     val context = LocalContext.current
-    var exitHintVisible by remember { mutableStateOf(false) }
+    var exitHintVisible by rememberSaveable { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
 
     // Mantieni schermo sempre acceso durante la Messa
     DisposableEffect(settings.keepScreenOnInLive) {
@@ -146,10 +168,52 @@ fun LiveExecutionScreen(
         liveEntries.firstOrNull { !it.item.track.playedInSession } ?: liveEntries.firstOrNull()
     }
 
-    val isWideLayout = windowWidthSizeClass != WindowWidthSizeClass.Compact
+    val isWideLayout = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
+    val isCompactHeight = windowSizeClass.heightSizeClass == WindowHeightSizeClass.Compact
     val isLiveBusy = !playbackState.isPreview && playbackState.isBusy
+    val isLivePlaying = !playbackState.isPreview && playbackState.status == PlaybackStatus.PLAYING
 
     Scaffold(
+        modifier = Modifier
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown || event.nativeKeyEvent.repeatCount > 0) {
+                    return@onPreviewKeyEvent false
+                }
+                when {
+                    event.key == Key.Spacebar && event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed -> {
+                        if (isLiveBusy) {
+                            onStopImmediate()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    event.key == Key.Spacebar && !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed -> {
+                        when {
+                            isLivePlaying -> {
+                                onFadeOut()
+                                true
+                            }
+                            !isLiveBusy && nextEntry != null -> {
+                                onPlayTrack(nextEntry.phaseLabel, nextEntry.item)
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                    event.key == Key.Escape -> {
+                        if (playbackState.status == PlaybackStatus.ERROR && playbackState.errorMessage != null) {
+                            onDismissError()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    else -> false
+                }
+            },
         containerColor = CoroColors.Background,
         topBar = {
             LiveTopHeader(
@@ -209,8 +273,8 @@ fun LiveExecutionScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        .padding(if (isCompactHeight) 10.dp else 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (isCompactHeight) 12.dp else 16.dp)
                 ) {
                     LiveTrackList(
                         entries = liveEntries,
@@ -226,6 +290,7 @@ fun LiveExecutionScreen(
                         playbackState = playbackState,
                         nextEntry = nextEntry,
                         holdDurationMs = settings.holdDurationMs,
+                        isCompactHeight = isCompactHeight,
                         onPlayNext = { entry -> onPlayTrack(entry.phaseLabel, entry.item) },
                         onFadeOut = onFadeOut,
                         onStopImmediate = onStopImmediate,
@@ -390,8 +455,10 @@ private fun LiveTrackList(
     modifier: Modifier = Modifier
 ) {
     val isAnyLiveBusy = !playbackState.isPreview && playbackState.isBusy
+    val listState = rememberLazyListState()
 
     LazyColumn(
+        state = listState,
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(bottom = 20.dp)
@@ -709,6 +776,7 @@ private fun LiveSideControlDesk(
     playbackState: PlaybackState,
     nextEntry: LiveTrackEntry?,
     holdDurationMs: Int,
+    isCompactHeight: Boolean,
     onPlayNext: (LiveTrackEntry) -> Unit,
     onFadeOut: () -> Unit,
     onStopImmediate: () -> Unit,
@@ -717,6 +785,7 @@ private fun LiveSideControlDesk(
     val isPlaying = !playbackState.isPreview && playbackState.status == PlaybackStatus.PLAYING
     val isFading = !playbackState.isPreview && playbackState.status == PlaybackStatus.FADING_OUT
     val isBusy = !playbackState.isPreview && playbackState.isBusy
+    val deskScrollState = rememberScrollState()
 
     Card(
         modifier = modifier,
@@ -727,11 +796,12 @@ private fun LiveSideControlDesk(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(20.dp),
+                .verticalScroll(deskScrollState)
+                .padding(if (isCompactHeight) 14.dp else 20.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             // Stato e brano attivo / prossimo
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 4.dp else 8.dp)) {
                 Text(
                     text = when {
                         isFading -> "SFUMATURA IN CORSO"
@@ -748,25 +818,27 @@ private fun LiveSideControlDesk(
                 Text(
                     text = if (isBusy) playbackState.phaseLabel else nextEntry?.phaseLabel ?: "—",
                     style = MaterialTheme.typography.titleMedium,
-                    color = CoroColors.TextSecondary
+                    color = CoroColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = if (isBusy) playbackState.title else nextEntry?.item?.song?.title ?: "Nessun brano",
-                    fontSize = 26.sp,
-                    lineHeight = 32.sp,
+                    fontSize = if (isCompactHeight) 20.sp else 26.sp,
+                    lineHeight = if (isCompactHeight) 24.sp else 32.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = CoroColors.TextPrimary,
-                    maxLines = 3,
+                    maxLines = if (isCompactHeight) 2 else 3,
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(if (isCompactHeight) 4.dp else 8.dp))
 
                 LinearProgressIndicator(
                     progress = { if (isBusy) playbackState.progressFraction else 0f },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(10.dp)
+                        .height(if (isCompactHeight) 8.dp else 10.dp)
                         .clip(RoundedCornerShape(5.dp)),
                     color = if (isFading) CoroColors.FadeAmberFill else CoroColors.PlayGreenFill,
                     trackColor = CoroColors.SurfaceElevated
@@ -777,7 +849,7 @@ private fun LiveSideControlDesk(
                 ) {
                     Text(
                         text = if (isBusy) TrackSettings.formatTimeMs(playbackState.positionMs) else "0:00",
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = if (isCompactHeight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                         color = CoroColors.TextSecondary
                     )
                     Text(
@@ -785,14 +857,21 @@ private fun LiveSideControlDesk(
                             TrackSettings.formatTimeMs(playbackState.durationMs)
                         else
                             TrackSettings.formatTimeMs(nextEntry?.item?.song?.durationMs ?: 0L),
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = if (isCompactHeight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                         color = CoroColors.TextSecondary
                     )
                 }
             }
 
-            // Controlli giganti per Tablet
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Spacer(modifier = Modifier.height(if (isCompactHeight) 10.dp else 16.dp))
+
+            // Controlli giganti adattivi per Tablet e Landscape
+            val playButtonHeight = if (isCompactHeight) 56.dp else 88.dp
+            val stopButtonHeight = if (isCompactHeight) 54.dp else 84.dp
+            val actionFontSize = if (isCompactHeight) 16.sp else 20.sp
+            val iconSize = if (isCompactHeight) 26.dp else 34.dp
+
+            Column(verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 8.dp else 14.dp)) {
                 HoldToConfirmSurface(
                     holdDurationMs = holdDurationMs,
                     onConfirmed = { nextEntry?.let(onPlayNext) },
@@ -800,20 +879,26 @@ private fun LiveSideControlDesk(
                     containerColor = CoroColors.PlayGreen,
                     progressFillColor = CoroColors.PlayGreenFill,
                     shape = RoundedCornerShape(18.dp),
+                    contentDescriptionText = "Tieni premuto per avviare il prossimo brano in scaletta",
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(88.dp)
+                        .height(playButtonHeight)
                 ) { _, _ ->
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+                        Icon(
+                            Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(if (isCompactHeight) 28.dp else 36.dp)
+                        )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = "AVVIA PROSSIMO",
-                            fontSize = 20.sp,
+                            fontSize = actionFontSize,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White
                         )
@@ -827,20 +912,26 @@ private fun LiveSideControlDesk(
                     containerColor = CoroColors.FadeAmber,
                     progressFillColor = CoroColors.FadeAmberFill,
                     shape = RoundedCornerShape(18.dp),
+                    contentDescriptionText = "Tieni premuto per sfumare la musica",
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(84.dp)
+                        .height(stopButtonHeight)
                 ) { _, _ ->
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.TrendingDown, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp))
+                        Icon(
+                            Icons.AutoMirrored.Filled.TrendingDown,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(iconSize)
+                        )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = if (isBusy) "SFUMA (${TrackSettings.formatFadeSec(playbackState.fadeOutMs)})" else "SFUMA",
-                            fontSize = 20.sp,
+                            fontSize = actionFontSize,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White
                         )
@@ -854,20 +945,26 @@ private fun LiveSideControlDesk(
                     containerColor = CoroColors.StopRed,
                     progressFillColor = CoroColors.StopRedFill,
                     shape = RoundedCornerShape(18.dp),
+                    contentDescriptionText = "Tieni premuto per fermare subito la musica",
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(84.dp)
+                        .height(stopButtonHeight)
                 ) { _, _ ->
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp))
+                        Icon(
+                            Icons.Default.Stop,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(iconSize)
+                        )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = "STOP IMMEDIATO",
-                            fontSize = 20.sp,
+                            fontSize = actionFontSize,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White
                         )

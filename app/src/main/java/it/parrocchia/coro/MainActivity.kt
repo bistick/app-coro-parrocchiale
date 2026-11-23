@@ -1,6 +1,10 @@
 package it.parrocchia.coro
 
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.KeyboardShortcutGroup
+import android.view.KeyboardShortcutInfo
+import android.view.Menu
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -12,7 +16,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
-import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,10 +55,49 @@ class MainActivity : ComponentActivity() {
                 val vm: CoroViewModel = viewModel(factory = CoroViewModel.Factory(appContainer))
                 CoroRootApp(
                     viewModel = vm,
-                    windowWidthSizeClass = windowSizeClass.widthSizeClass
+                    windowSizeClass = windowSizeClass
                 )
             }
         }
+    }
+
+    override fun onProvideKeyboardShortcuts(
+        data: MutableList<KeyboardShortcutGroup>?,
+        menu: Menu?,
+        deviceId: Int
+    ) {
+        data ?: return
+        data.add(
+            KeyboardShortcutGroup(
+                "Esecuzione Live",
+                listOf(
+                    KeyboardShortcutInfo("Avvia prossimo / Sfuma", KeyEvent.KEYCODE_SPACE, 0),
+                    KeyboardShortcutInfo("Stop immediato", KeyEvent.KEYCODE_SPACE, KeyEvent.META_SHIFT_ON),
+                    KeyboardShortcutInfo("Chiudi avviso errore", KeyEvent.KEYCODE_ESCAPE, 0)
+                )
+            )
+        )
+        data.add(
+            KeyboardShortcutGroup(
+                "Programmazione Messa",
+                listOf(
+                    KeyboardShortcutInfo("Nuova messa", KeyEvent.KEYCODE_N, KeyEvent.META_CTRL_ON),
+                    KeyboardShortcutInfo("Apri libreria", KeyEvent.KEYCODE_O, KeyEvent.META_CTRL_ON),
+                    KeyboardShortcutInfo("Avvia esecuzione live", KeyEvent.KEYCODE_ENTER, KeyEvent.META_CTRL_ON)
+                )
+            )
+        )
+        data.add(
+            KeyboardShortcutGroup(
+                "Libreria",
+                listOf(
+                    KeyboardShortcutInfo("Cerca brano", KeyEvent.KEYCODE_F, KeyEvent.META_CTRL_ON),
+                    KeyboardShortcutInfo("Aggiorna libreria", KeyEvent.KEYCODE_R, KeyEvent.META_CTRL_ON),
+                    KeyboardShortcutInfo("Scegli cartella", KeyEvent.KEYCODE_O, KeyEvent.META_CTRL_ON),
+                    KeyboardShortcutInfo("Pulisci ricerca", KeyEvent.KEYCODE_ESCAPE, 0)
+                )
+            )
+        )
     }
 }
 
@@ -74,7 +117,7 @@ private object Routes {
 @Composable
 private fun CoroRootApp(
     viewModel: CoroViewModel,
-    windowWidthSizeClass: WindowWidthSizeClass
+    windowSizeClass: WindowSizeClass
 ) {
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -136,7 +179,7 @@ private fun CoroRootApp(
                         massPlan = massPlan,
                         settings = settings,
                         playbackState = playbackState,
-                        windowWidthSizeClass = windowWidthSizeClass,
+                        windowSizeClass = windowSizeClass,
                         onPlayTrack = viewModel::playLiveTrack,
                         onFadeOut = viewModel::fadeOutLive,
                         onStopImmediate = viewModel::stopImmediateLive,
