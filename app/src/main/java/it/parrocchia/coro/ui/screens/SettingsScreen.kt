@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridS
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
@@ -36,12 +37,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -57,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,6 +74,34 @@ import it.parrocchia.coro.ui.theme.CoroColors
 import kotlin.math.roundToInt
 
 private val CompactButtonPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+
+private data class RecommendedSoundFont(
+    val name: String,
+    val sizeLabel: String,
+    val description: String,
+    val downloadUrl: String
+)
+
+private val RecommendedSoundFonts = listOf(
+    RecommendedSoundFont(
+        name = "GeneralUser GS",
+        sizeLabel = "31 MB",
+        description = "Leggero e bilanciato — ideale su smartphone",
+        downloadUrl = "https://github.com/mrbumpy409/GeneralUser-GS/raw/main/GeneralUser-GS.sf2"
+    ),
+    RecommendedSoundFont(
+        name = "FluidR3 GM",
+        sizeLabel = "142 MB",
+        description = "Classico MIT caldo su organo, piano e archi",
+        downloadUrl = "https://github.com/pianobooster/fluid-soundfont/releases/download/v3.1/FluidR3_GM.sf2"
+    ),
+    RecommendedSoundFont(
+        name = "MuseScore General",
+        sizeLabel = "206 MB",
+        description = "Suoni acustici e orchestrali ricchi (MIT)",
+        downloadUrl = "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf2"
+    )
+)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -87,6 +119,7 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     var testTriggers by rememberSaveable { mutableIntStateOf(0) }
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     val gridState = rememberLazyStaggeredGridState()
@@ -267,6 +300,72 @@ fun SettingsScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(
+                        color = CoroColors.Border.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    )
+
+                    Text(
+                        text = "Banchi gratuiti consigliati (scarica .sf2 e poi premi Carica .sf2):",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = CoroColors.TextSecondary
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RecommendedSoundFonts.forEach { sf ->
+                            Surface(
+                                onClick = {
+                                    runCatching { uriHandler.openUri(sf.downloadUrl) }
+                                },
+                                color = CoroColors.SurfaceElevated,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Text(
+                                                text = sf.name,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = CoroColors.TextPrimary
+                                            )
+                                            Text(
+                                                text = sf.sizeLabel,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = CoroColors.Gold,
+                                                maxLines = 1
+                                            )
+                                        }
+                                        Text(
+                                            text = sf.description,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = CoroColors.TextSecondary
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Scarica ${sf.name}",
+                                        tint = CoroColors.Gold,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
                             }
                         }
                     }
