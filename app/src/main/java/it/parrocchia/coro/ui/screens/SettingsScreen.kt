@@ -486,7 +486,7 @@ fun SettingsScreen(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Architettura predisposta per future estensioni: Template di Messa salvabili e controllo mixer RØDECaster Pro II.",
+                        text = "Motore MIDI FluidSynth (SF2/SF3) · Preset di Messa liturgici e personalizzati · Predisposto per controllo mixer RØDECaster Pro II.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = CoroColors.TextSecondary
                     )
