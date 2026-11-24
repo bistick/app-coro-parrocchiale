@@ -21,7 +21,13 @@ data class ScanSummary(
 
 class LibraryScanner(
     private val context: Context,
-    private val dao: CoroDao
+    private val dao: CoroDao,
+    private val documentTreeResolver: (Uri) -> DocumentFile? = { uri ->
+        DocumentFile.fromTreeUri(context, uri)
+    },
+    private val midiDurationProber: (ByteArray) -> Long = { bytes ->
+        NativeMidiSynth.probeMidiDurationMs(bytes)
+    }
 ) {
     /**
      * Indicizza i brani di prova inclusi negli asset dell'app (assets/demo_tracks/).
@@ -72,7 +78,7 @@ class LibraryScanner(
      * le impostazioni predefinite (sfumatura, attacco, tonalità, volume) dei brani esistenti.
      */
     suspend fun scanFolderTree(treeUri: Uri, defaultFadeOutMs: Int): ScanSummary = withContext(Dispatchers.IO) {
-        val root = DocumentFile.fromTreeUri(context, treeUri)
+        val root = documentTreeResolver(treeUri)
             ?: error("Cartella non accessibile. Selezionala di nuovo dalle Impostazioni.")
 
         val existingByUri = dao.getAllSongsOnce()
@@ -176,7 +182,7 @@ class LibraryScanner(
             when (format) {
                 AudioFormat.MIDI -> {
                     val bytes = context.assets.open(assetPath).use { it.readBytes() }
-                    NativeMidiSynth.probeMidiDurationMs(bytes)
+                    midiDurationProber(bytes)
                 }
                 AudioFormat.AUDIO -> {
                     val retriever = MediaMetadataRetriever()
@@ -198,7 +204,7 @@ class LibraryScanner(
             when (format) {
                 AudioFormat.MIDI -> {
                     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return 0L
-                    NativeMidiSynth.probeMidiDurationMs(bytes)
+                    midiDurationProber(bytes)
                 }
                 AudioFormat.AUDIO -> {
                     val retriever = MediaMetadataRetriever()

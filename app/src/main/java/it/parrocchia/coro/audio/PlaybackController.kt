@@ -4,14 +4,17 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import it.parrocchia.coro.audio.media.AudioPlaybackEngine
 import it.parrocchia.coro.audio.media.ExoAudioPlayer
 import it.parrocchia.coro.audio.midi.MidiAudioPlayer
+import it.parrocchia.coro.audio.midi.MidiPlaybackEngine
 import it.parrocchia.coro.data.db.PlannedTrackWithSong
 import it.parrocchia.coro.data.db.SongEntity
 import it.parrocchia.coro.data.repository.CoroRepository
 import it.parrocchia.coro.domain.mixer.MixerController
 import it.parrocchia.coro.domain.model.AudioFormat
 import it.parrocchia.coro.domain.model.TrackSettings
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,11 +31,18 @@ import kotlinx.coroutines.launch
 class PlaybackController(
     private val context: Context,
     private val repository: CoroRepository,
-    private val mixerController: MixerController
+    private val mixerController: MixerController,
+    private val midiPlayer: MidiPlaybackEngine = MidiAudioPlayer(context),
+    private val exoPlayer: AudioPlaybackEngine = ExoAudioPlayer(context),
+    dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val startForegroundService: (title: String, phaseLabel: String) -> Unit = { title, phase ->
+        PlaybackForegroundService.start(context, title, phase)
+    },
+    private val stopForegroundService: () -> Unit = {
+        PlaybackForegroundService.stop(context)
+    }
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val midiPlayer = MidiAudioPlayer(context)
-    private val exoPlayer = ExoAudioPlayer(context)
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private var audioFocusRequest: AudioFocusRequest? = null
@@ -74,7 +84,7 @@ class PlaybackController(
 
         scope.launch {
             requestAudioFocus()
-            PlaybackForegroundService.start(context, song.title, phaseLabel)
+            startForegroundService(song.title, phaseLabel)
             mixerController.onTrackStart(track.id, track.mixerConfigJson)
             startEngine(
                 uri = song.uri,
@@ -237,7 +247,7 @@ class PlaybackController(
 
         val commonOnError: (String) -> Unit = { msg ->
             scope.launch {
-                PlaybackForegroundService.stop(context)
+                stopForegroundService()
                 abandonAudioFocus()
                 activeFormat = null
                 _state.value = PlaybackState(
@@ -303,7 +313,7 @@ class PlaybackController(
                 repository.markTrackPlayed(prev.activeTrackId, true)
             }
         }
-        PlaybackForegroundService.stop(context)
+        stopForegroundService()
         abandonAudioFocus()
         activeFormat = null
         activeMixerJson = null

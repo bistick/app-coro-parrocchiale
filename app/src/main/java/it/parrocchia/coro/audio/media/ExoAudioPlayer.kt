@@ -21,12 +21,28 @@ import kotlinx.coroutines.launch
 import kotlin.math.ln
 import kotlin.math.roundToInt
 
+interface AudioPlaybackEngine {
+    fun start(
+        uriString: String,
+        startOffsetMs: Long,
+        transposeSemitones: Int,
+        volume: Float,
+        listener: ExoAudioPlayer.Listener
+    )
+    fun fadeOut(durationMs: Int)
+    fun stopWithAntiClick()
+    fun stopImmediate()
+    fun updateLiveTranspose(semitones: Int)
+    fun updateLiveVolume(volume: Float)
+    fun seekLive(positionMs: Long)
+}
+
 /**
  * Motore di riproduzione per file audio (MP3, WAV, M4A, OGG, FLAC) tramite Media3 ExoPlayer.
  * Supporta punto di attacco, trasposizione pitch (senza cambiare velocità), volume per brano,
  * sfumatura fluida e micro-rampa anti-click allo stop immediato.
  */
-class ExoAudioPlayer(private val context: Context) {
+class ExoAudioPlayer(private val context: Context) : AudioPlaybackEngine {
 
     interface Listener {
         fun onProgress(positionMs: Long, durationMs: Long, isFading: Boolean, fadeProgress: Float)
@@ -45,7 +61,7 @@ class ExoAudioPlayer(private val context: Context) {
     private var currentFadeProgress: Float = 0f
     private var activeListener: Listener? = null
 
-    fun start(
+    override fun start(
         uriString: String,
         startOffsetMs: Long,
         transposeSemitones: Int,
@@ -105,7 +121,7 @@ class ExoAudioPlayer(private val context: Context) {
         }
     }
 
-    fun fadeOut(durationMs: Int) {
+    override fun fadeOut(durationMs: Int) {
         scope.launch {
             val player = exoPlayer ?: return@launch
             if (isFading) return@launch
@@ -113,7 +129,7 @@ class ExoAudioPlayer(private val context: Context) {
         }
     }
 
-    fun stopWithAntiClick() {
+    override fun stopWithAntiClick() {
         scope.launch {
             val player = exoPlayer ?: return@launch
             fadeJob?.cancel()
@@ -121,13 +137,13 @@ class ExoAudioPlayer(private val context: Context) {
         }
     }
 
-    fun stopImmediate() {
+    override fun stopImmediate() {
         scope.launch {
             stopInternal()
         }
     }
 
-    fun updateLiveTranspose(semitones: Int) {
+    override fun updateLiveTranspose(semitones: Int) {
         scope.launch {
             val player = exoPlayer ?: return@launch
             player.playbackParameters = PlaybackParameters(
@@ -137,7 +153,7 @@ class ExoAudioPlayer(private val context: Context) {
         }
     }
 
-    fun updateLiveVolume(volume: Float) {
+    override fun updateLiveVolume(volume: Float) {
         scope.launch {
             baseVolume = volume.coerceIn(0.05f, 1.5f)
             val player = exoPlayer ?: return@launch
@@ -147,7 +163,7 @@ class ExoAudioPlayer(private val context: Context) {
         }
     }
 
-    fun seekLive(positionMs: Long) {
+    override fun seekLive(positionMs: Long) {
         scope.launch {
             exoPlayer?.seekTo(positionMs.coerceAtLeast(0L))
         }

@@ -14,13 +14,30 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 
+interface MidiPlaybackEngine {
+    fun start(
+        uriString: String,
+        soundFontPath: String,
+        startOffsetMs: Long,
+        transposeSemitones: Int,
+        volume: Float,
+        listener: MidiAudioPlayer.Listener
+    )
+    fun fadeOut(durationMs: Int)
+    fun stopWithAntiClick()
+    fun stopImmediateSync()
+    fun updateLiveTranspose(semitones: Int)
+    fun updateLiveVolume(volume: Float)
+    fun seekLive(positionMs: Long)
+}
+
 /**
  * Motore di riproduzione MIDI basato su FluidSynth v2.6.2 + AudioTrack PCM Float Stereo
  * al sample rate nativo del dispositivo (es. 48 kHz senza resampling di sistema).
  * Gestisce punto di attacco esatto, trasposizione (escludendo ch. 10 percussioni),
  * volume per brano, sfumatura fluida, limiter C¹ anti-clipping e micro-rampa anti-click.
  */
-class MidiAudioPlayer(private val context: Context) {
+class MidiAudioPlayer(private val context: Context) : MidiPlaybackEngine {
 
     interface Listener {
         fun onProgress(positionMs: Long, durationMs: Long, isFading: Boolean, fadeProgress: Float)
@@ -45,7 +62,7 @@ class MidiAudioPlayer(private val context: Context) {
     private val pendingTranspose = AtomicInteger(Int.MIN_VALUE)
     private val pendingSeekMs = AtomicLong(-1L)
 
-    fun start(
+    override fun start(
         uriString: String,
         soundFontPath: String,
         startOffsetMs: Long,
@@ -96,7 +113,7 @@ class MidiAudioPlayer(private val context: Context) {
         thread.start()
     }
 
-    fun fadeOut(durationMs: Int) {
+    override fun fadeOut(durationMs: Int) {
         if (isFadingOut.get()) return
         val safeMs = durationMs.coerceAtLeast(100)
         fadeElapsedSamples.set(0L)
@@ -108,14 +125,14 @@ class MidiAudioPlayer(private val context: Context) {
      * Stop immediato con micro-rampa anti-click (18 ms) per non produrre "pop"
      * sull'impianto audio della chiesa.
      */
-    fun stopWithAntiClick() {
+    override fun stopWithAntiClick() {
         val microSamples = (ANTI_CLICK_STOP_MS * activeSampleRate) / 1000L
         fadeElapsedSamples.set(0L)
         fadeDurationSamples.set(microSamples)
         isFadingOut.set(true)
     }
 
-    fun stopImmediateSync() {
+    override fun stopImmediateSync() {
         stopRequested.set(true)
         val thread = synchronized(lock) {
             val t = renderThread
@@ -131,15 +148,15 @@ class MidiAudioPlayer(private val context: Context) {
         }
     }
 
-    fun updateLiveTranspose(semitones: Int) {
+    override fun updateLiveTranspose(semitones: Int) {
         pendingTranspose.set(semitones.coerceIn(-12, 12))
     }
 
-    fun updateLiveVolume(volume: Float) {
+    override fun updateLiveVolume(volume: Float) {
         targetVolume = volume.coerceIn(0.05f, 1.8f)
     }
 
-    fun seekLive(positionMs: Long) {
+    override fun seekLive(positionMs: Long) {
         pendingSeekMs.set(positionMs.coerceAtLeast(0L))
     }
 

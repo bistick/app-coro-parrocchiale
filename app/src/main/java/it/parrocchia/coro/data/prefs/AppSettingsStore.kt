@@ -30,7 +30,9 @@ data class AppSettings(
     }
 }
 
-class AppSettingsStore(private val context: Context) {
+class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
+
+    constructor(context: Context) : this(context.settingsDataStore)
 
     private object Keys {
         val LIBRARY_FOLDER_URI = stringPreferencesKey("library_folder_uri")
@@ -42,7 +44,7 @@ class AppSettingsStore(private val context: Context) {
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on_live")
     }
 
-    val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
+    val settings: Flow<AppSettings> = dataStore.data.map { prefs ->
         AppSettings(
             libraryFolderUri = prefs[Keys.LIBRARY_FOLDER_URI],
             libraryFolderName = prefs[Keys.LIBRARY_FOLDER_NAME],
@@ -57,7 +59,7 @@ class AppSettingsStore(private val context: Context) {
     }
 
     suspend fun setLibraryFolder(uri: String?, name: String?) {
-        context.settingsDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             if (uri.isNullOrBlank()) {
                 prefs.remove(Keys.LIBRARY_FOLDER_URI)
                 prefs.remove(Keys.LIBRARY_FOLDER_NAME)
@@ -69,7 +71,7 @@ class AppSettingsStore(private val context: Context) {
     }
 
     suspend fun setCustomSoundFont(localPath: String?, displayName: String?) {
-        context.settingsDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             if (localPath.isNullOrBlank()) {
                 prefs.remove(Keys.CUSTOM_SF2_LOCAL_PATH)
                 prefs.remove(Keys.CUSTOM_SF2_NAME)
@@ -82,15 +84,15 @@ class AppSettingsStore(private val context: Context) {
 
     suspend fun setHoldDurationMs(durationMs: Int) {
         val clamped = durationMs.coerceIn(AppSettings.MIN_HOLD_DURATION_MS, AppSettings.MAX_HOLD_DURATION_MS)
-        context.settingsDataStore.edit { it[Keys.HOLD_DURATION_MS] = clamped }
+        dataStore.edit { it[Keys.HOLD_DURATION_MS] = clamped }
     }
 
     suspend fun setDefaultFadeOutMs(fadeMs: Int) {
         val clamped = fadeMs.coerceIn(TrackSettings.MIN_FADE_OUT_MS, TrackSettings.MAX_FADE_OUT_MS)
-        context.settingsDataStore.edit { it[Keys.DEFAULT_FADE_OUT_MS] = clamped }
+        dataStore.edit { it[Keys.DEFAULT_FADE_OUT_MS] = clamped }
     }
 
     suspend fun setKeepScreenOnInLive(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.KEEP_SCREEN_ON] = enabled }
+        dataStore.edit { it[Keys.KEEP_SCREEN_ON] = enabled }
     }
 }

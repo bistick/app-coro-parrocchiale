@@ -1,3 +1,6 @@
+import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
+import org.gradle.testing.jacoco.tasks.JacocoCoverageVerification
+import org.gradle.testing.jacoco.tasks.JacocoReport
 import java.net.HttpURLConnection
 import java.net.URI
 import java.util.zip.ZipFile
@@ -7,6 +10,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    jacoco
 }
 
 android {
@@ -70,6 +74,133 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+            all { test ->
+                test.extensions.configure(JacocoTaskExtension::class.java) {
+                    isIncludeNoLocationClasses = true
+                    excludes = listOf("jdk.internal.*")
+                }
+            }
+        }
+    }
+}
+
+jacoco {
+    toolVersion = "0.8.12"
+}
+
+val jacocoExcludes = listOf(
+    "**/R.class",
+    "**/R$*.class",
+    "**/BuildConfig.*",
+    "**/Manifest*.*",
+    "**/*Test*.*",
+    "android/**/*.*",
+    // Generated Room classes
+    "**/*_Impl*.*",
+    "**/CoroDatabase_Impl*.*",
+    "**/CoroDao_Impl*.*",
+    // Compose previews & theme constants
+    "**/ui/preview/**",
+    "**/ui/theme/**",
+    "**/ComposableSingletons*",
+    // Android Activity/Application entry points & hardware-only audio engines (AudioTrack / ExoPlayer)
+    "**/CoroApplication*.*",
+    "**/AppContainer*.*",
+    "**/MainActivity*.*",
+    "**/Routes*.*",
+    "**/audio/midi/MidiAudioPlayer*.*",
+    "**/audio/media/ExoAudioPlayer*.*"
+)
+
+val jacocoBusinessLogicIncludes = listOf(
+    "it/parrocchia/coro/domain/**",
+    "it/parrocchia/coro/data/**",
+    "it/parrocchia/coro/ui/CoroViewModel*",
+    "it/parrocchia/coro/audio/FadeCurve*",
+    "it/parrocchia/coro/audio/PlaybackState*",
+    "it/parrocchia/coro/audio/PlaybackStatus*",
+    "it/parrocchia/coro/audio/PlaybackController*",
+    "it/parrocchia/coro/audio/PlaybackForegroundService*",
+    "it/parrocchia/coro/audio/midi/NativeMidiSynth*"
+)
+
+val jacocoClassDirs = fileTree(layout.buildDirectory.dir("tmp/kotlin-classes/debug")) {
+    include(jacocoBusinessLogicIncludes)
+    exclude(jacocoExcludes)
+}
+
+val jacocoAllClassDirs = fileTree(layout.buildDirectory.dir("tmp/kotlin-classes/debug")) {
+    exclude(jacocoExcludes)
+}
+
+val jacocoExecData = fileTree(layout.buildDirectory) {
+    include(
+        "jacoco/testDebugUnitTest.exec",
+        "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec"
+    )
+}
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    dependsOn("testDebugUnitTest")
+    group = "verification"
+    description = "Generates JaCoCo XML and HTML coverage reports for business logic unit tests."
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        csv.required.set(true)
+        xml.outputLocation.set(layout.buildDirectory.file("reports/jacoco/jacocoTestReport/jacocoTestReport.xml"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/jacoco/jacocoTestReport/html"))
+        csv.outputLocation.set(layout.buildDirectory.file("reports/jacoco/jacocoTestReport/jacocoTestReport.csv"))
+    }
+
+    sourceDirectories.setFrom(files("src/main/java"))
+    classDirectories.setFrom(jacocoClassDirs)
+    executionData.setFrom(jacocoExecData)
+}
+
+tasks.register<JacocoReport>("jacocoFullReport") {
+    dependsOn("testDebugUnitTest")
+    group = "verification"
+    description = "Generates JaCoCo XML and HTML coverage reports including Compose UI screens."
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        csv.required.set(true)
+        xml.outputLocation.set(layout.buildDirectory.file("reports/jacoco/jacocoFullReport/jacocoFullReport.xml"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/jacoco/jacocoFullReport/html"))
+        csv.outputLocation.set(layout.buildDirectory.file("reports/jacoco/jacocoFullReport/jacocoFullReport.csv"))
+    }
+
+    sourceDirectories.setFrom(files("src/main/java"))
+    classDirectories.setFrom(jacocoAllClassDirs)
+    executionData.setFrom(jacocoExecData)
+}
+
+tasks.register<JacocoCoverageVerification>("jacocoTestCoverageVerification") {
+    dependsOn("jacocoTestReport")
+    group = "verification"
+    description = "Verifies at least 95% line coverage on business logic."
+
+    sourceDirectories.setFrom(files("src/main/java"))
+    classDirectories.setFrom(jacocoClassDirs)
+    executionData.setFrom(jacocoExecData)
+
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                value = "COVEREDRATIO"
+                minimum = "0.95".toBigDecimal()
+            }
         }
     }
 }
@@ -209,6 +340,13 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core.ktx)
+    testImplementation(libs.androidx.test.ext.junit.ktx)
+    testImplementation(libs.mockk)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.ui.test.junit4)
 
     debugImplementation(libs.androidx.ui.tooling)
+    debugImplementation(libs.androidx.ui.test.manifest)
 }
