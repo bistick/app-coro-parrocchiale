@@ -35,7 +35,8 @@ class RodeMixerController(
     private val transport: RodeHidTransport,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val writeSpacingMs: Long = DEFAULT_WRITE_SPACING_MS,
-    private val clockMs: () -> Long = { System.currentTimeMillis() }
+    private val clockMs: () -> Long = { System.currentTimeMillis() },
+    autoConnectOnInit: Boolean = false
 ) : MixerController {
 
     private val ioMutex = Mutex()
@@ -59,22 +60,48 @@ class RodeMixerController(
             },
             onDeviceDetached = {
                 scope.launch { handleExternalDisconnect() }
+            },
+            onDeviceAttached = {
+                scope.launch { connectIfDisconnected() }
             }
         )
+        if (autoConnectOnInit) {
+            scope.launch { connectIfDisconnected() }
+        }
+    }
+
+    fun triggerAutoConnect() {
+        scope.launch { connectIfDisconnected() }
+    }
+
+    suspend fun connectIfDisconnected(): Result<Unit> = ioMutex.withLock {
+        if (transport.isConnected && liveLayout != null) {
+            return@withLock Result.success(Unit)
+        }
+        connectLocked(silentWhenMissing = true)
     }
 
     suspend fun connect(): Result<Unit> = ioMutex.withLock {
+        connectLocked(silentWhenMissing = false)
+    }
+
+    private suspend fun connectLocked(silentWhenMissing: Boolean): Result<Unit> {
         stopPushListener()
-        _state.update {
-            it.copy(
-                status = RodeConnectionStatus.CONNECTING,
-                isBusy = true,
-                errorMessage = null,
-                statusMessage = "Ricerca RØDECaster Pro II su USB 1..."
-            )
+        if (!silentWhenMissing) {
+            _state.update {
+                it.copy(
+                    status = RodeConnectionStatus.CONNECTING,
+                    isBusy = true,
+                    errorMessage = null,
+                    statusMessage = "Ricerca RØDECaster Pro II su USB 1..."
+                )
+            }
         }
 
-        when (val result = transport.connect()) {
+        val result = runCatching { transport.connect() }
+            .getOrElse { err -> RodeConnectResult.Error(err.message ?: "Errore connessione USB") }
+
+        return when (result) {
             RodeConnectResult.DeviceNotFound -> {
                 resetInternalTracking()
                 _state.value = RodeMixerState(

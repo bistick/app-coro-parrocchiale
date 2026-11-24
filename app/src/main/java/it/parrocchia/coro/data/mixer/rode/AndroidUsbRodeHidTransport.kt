@@ -60,7 +60,8 @@ class AndroidUsbRodeHidTransport(
 
     override fun startMonitoring(
         onPermissionGranted: () -> Unit,
-        onDeviceDetached: () -> Unit
+        onDeviceDetached: () -> Unit,
+        onDeviceAttached: () -> Unit
     ) {
         synchronized(lock) {
             if (receiver != null) return
@@ -68,9 +69,22 @@ class AndroidUsbRodeHidTransport(
                 override fun onReceive(ctx: Context?, intent: Intent?) {
                     when (intent?.action) {
                         ACTION_USB_PERMISSION -> {
-                            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) ||
+                                hasGrantedPro2Permission()
                             if (granted) {
                                 onPermissionGranted()
+                            }
+                        }
+
+                        UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                            val attached = extractUsbDevice(intent)
+                            val isRodeAttached = if (attached != null) {
+                                attached.vendorId == RodeHidProtocol.RODE_VENDOR_ID
+                            } else {
+                                findPro2ControlTarget(usbManager?.deviceList?.values.orEmpty()) != null
+                            }
+                            if (isRodeAttached) {
+                                onDeviceAttached()
                             }
                         }
 
@@ -87,6 +101,7 @@ class AndroidUsbRodeHidTransport(
             }
             val filter = IntentFilter().apply {
                 addAction(ACTION_USB_PERMISSION)
+                addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
                 addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -495,13 +510,15 @@ class AndroidUsbRodeHidTransport(
         useControlForWrites = false
     }
 
+    private fun hasGrantedPro2Permission(): Boolean {
+        val manager = usbManager ?: return false
+        val match = findPro2ControlTarget(manager.deviceList?.values.orEmpty()) ?: return false
+        return manager.hasPermission(match.first)
+    }
+
     private fun requestUsbPermission(manager: UsbManager, device: UsbDevice) {
         val intent = Intent(ACTION_USB_PERMISSION).setPackage(context.packageName)
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val pendingIntent = PendingIntent.getBroadcast(context, USB_PERMISSION_REQ_CODE, intent, flags)
         manager.requestPermission(device, pendingIntent)
     }

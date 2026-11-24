@@ -207,4 +207,56 @@ interface CoroDao {
             updateSongDefaultMixerConfig(songId = songId, mixerConfigJson = mixerConfigJson)
         }
     }
+
+    @Query(
+        """
+        UPDATE planned_tracks
+        SET fadeOutMs = :fadeOutMs,
+            startOffsetMs = :startOffsetMs,
+            transposeSemitones = :transposeSemitones,
+            volume = :volume,
+            mixerConfigJson = :mixerConfigJson
+        WHERE songId = :songId
+          AND phaseId IN (
+              SELECT mp.id FROM mass_phases mp
+              INNER JOIN mass_plans p ON p.id = mp.massPlanId
+              WHERE p.isActive = 1 AND p.isTemplate = 0
+          )
+        """
+    )
+    suspend fun syncPlannedTracksInActiveMassForSong(
+        songId: Long,
+        fadeOutMs: Int,
+        startOffsetMs: Long,
+        transposeSemitones: Int,
+        volume: Float,
+        mixerConfigJson: String?
+    ): Int
+
+    @Transaction
+    suspend fun saveSongDefaultsAndSyncActiveMass(
+        songId: Long,
+        fadeOutMs: Int,
+        startOffsetMs: Long,
+        transposeSemitones: Int,
+        volume: Float,
+        mixerConfigJson: String?
+    ) {
+        updateSongDefaults(
+            songId = songId,
+            fadeOutMs = fadeOutMs,
+            startOffsetMs = startOffsetMs,
+            transposeSemitones = transposeSemitones,
+            volume = volume
+        )
+        updateSongDefaultMixerConfig(songId = songId, mixerConfigJson = mixerConfigJson)
+        syncPlannedTracksInActiveMassForSong(
+            songId = songId,
+            fadeOutMs = fadeOutMs,
+            startOffsetMs = startOffsetMs,
+            transposeSemitones = transposeSemitones,
+            volume = volume,
+            mixerConfigJson = mixerConfigJson
+        )
+    }
 }

@@ -405,14 +405,14 @@ class CoroRepository(
 
     suspend fun updateSongDefaultsDirect(songId: Long, settings: TrackSettings, maxDurationMs: Long) {
         val safe = settings.normalized(maxDurationMs)
-        dao.updateSongDefaults(
+        dao.saveSongDefaultsAndSyncActiveMass(
             songId = songId,
             fadeOutMs = safe.fadeOutMs,
             startOffsetMs = safe.startOffsetMs,
             transposeSemitones = safe.transposeSemitones,
-            volume = safe.volume
+            volume = safe.volume,
+            mixerConfigJson = safe.mixerConfigJson
         )
-        dao.updateSongDefaultMixerConfig(songId = songId, mixerConfigJson = safe.mixerConfigJson)
     }
 
     suspend fun markTrackPlayed(trackId: Long, played: Boolean) {
@@ -445,7 +445,10 @@ class CoroRepository(
     suspend fun setDefaultFadeOutMs(fadeMs: Int) = settingsStore.setDefaultFadeOutMs(fadeMs)
     suspend fun setKeepScreenOnInLive(enabled: Boolean) = settingsStore.setKeepScreenOnInLive(enabled)
     suspend fun setAudioOutputRoute(route: AudioOutputRoute) = settingsStore.setAudioOutputRoute(route)
-    suspend fun setRodeAutomationConfig(config: RodeAutomationConfig) = settingsStore.setRodeAutomationConfig(config)
+    suspend fun setRodeAutomationConfig(
+        config: RodeAutomationConfig,
+        markChannelsConfigured: Boolean = true
+    ) = settingsStore.setRodeAutomationConfig(config, markChannelsConfigured)
 
     companion object {
         const val CUSTOM_TEMPLATE_PREFIX = "custom:"

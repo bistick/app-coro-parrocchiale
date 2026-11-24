@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- RØDE Microphones (Vendor ID 0x19F7 = 6647) -->
+    <usb-device vendor-id="6647" />
+</resources>

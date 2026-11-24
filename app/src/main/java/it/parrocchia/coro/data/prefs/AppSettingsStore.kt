@@ -26,7 +26,8 @@ data class AppSettings(
     val defaultFadeOutMs: Int = TrackSettings.DEFAULT_FADE_OUT_MS,
     val keepScreenOnInLive: Boolean = true,
     val audioOutputRoute: AudioOutputRoute = AudioOutputRoute.AUTO,
-    val rodeAutomationConfig: RodeAutomationConfig = RodeAutomationConfig()
+    val rodeAutomationConfig: RodeAutomationConfig = RodeAutomationConfig(),
+    val hasConfiguredRodeMusicChannel: Boolean = false
 ) {
     companion object {
         const val MIN_HOLD_DURATION_MS = 300
@@ -49,9 +50,11 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on_live")
         val AUDIO_OUTPUT_ROUTE = stringPreferencesKey("audio_output_route")
         val RODE_AUTOMATION_JSON = stringPreferencesKey("rode_automation_json")
+        val RODE_MUSIC_CHANNEL_CONFIGURED = booleanPreferencesKey("rode_music_channel_configured")
     }
 
     val settings: Flow<AppSettings> = dataStore.data.map { prefs ->
+        val decodedRodeConfig = RodeAutomationConfigCodec.decode(prefs[Keys.RODE_AUTOMATION_JSON])
         AppSettings(
             libraryFolderUri = prefs[Keys.LIBRARY_FOLDER_URI],
             libraryFolderName = prefs[Keys.LIBRARY_FOLDER_NAME],
@@ -63,7 +66,10 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
                 .coerceIn(TrackSettings.MIN_FADE_OUT_MS, TrackSettings.MAX_FADE_OUT_MS),
             keepScreenOnInLive = prefs[Keys.KEEP_SCREEN_ON] ?: true,
             audioOutputRoute = AudioOutputRoute.fromStoredName(prefs[Keys.AUDIO_OUTPUT_ROUTE]),
-            rodeAutomationConfig = RodeAutomationConfigCodec.decode(prefs[Keys.RODE_AUTOMATION_JSON])
+            rodeAutomationConfig = decodedRodeConfig,
+            hasConfiguredRodeMusicChannel = (prefs[Keys.RODE_MUSIC_CHANNEL_CONFIGURED] == true) ||
+                decodedRodeConfig.musicFaderIndices.isNotEmpty() ||
+                decodedRodeConfig.alwaysMuteOnStopFaderIndices.isNotEmpty()
         )
     }
 
@@ -109,7 +115,18 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { it[Keys.AUDIO_OUTPUT_ROUTE] = route.name }
     }
 
-    suspend fun setRodeAutomationConfig(config: RodeAutomationConfig) {
-        dataStore.edit { it[Keys.RODE_AUTOMATION_JSON] = RodeAutomationConfigCodec.encode(config) }
+    suspend fun setRodeAutomationConfig(
+        config: RodeAutomationConfig,
+        markChannelsConfigured: Boolean = true
+    ) {
+        dataStore.edit { prefs ->
+            prefs[Keys.RODE_AUTOMATION_JSON] = RodeAutomationConfigCodec.encode(config)
+            if (markChannelsConfigured ||
+                config.musicFaderIndices.isNotEmpty() ||
+                config.alwaysMuteOnStopFaderIndices.isNotEmpty()
+            ) {
+                prefs[Keys.RODE_MUSIC_CHANNEL_CONFIGURED] = true
+            }
+        }
     }
 }

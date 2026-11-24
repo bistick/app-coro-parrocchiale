@@ -275,12 +275,44 @@ class CoroViewModelTest {
         coVerify { mixerController.setMonitorMute(false) }
         coVerify { mixerController.setMonitorAutoMute(false) }
         verify { mixerController.setAutomationConfig(autoCfg) }
-        coVerify { repository.setRodeAutomationConfig(autoCfg) }
+        coVerify { repository.setRodeAutomationConfig(autoCfg, true) }
         coVerify { mixerController.muteAllAssignedFaders() }
         verify { mixerController.clearError() }
         verify { audioRouter.setPreferredRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH) }
         verify { audioRouter.refreshDevices() }
         coVerify { repository.setAudioOutputRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH) }
+    }
+
+    @Test
+    fun init_autoSelectsUsb1MainMusicChannelOnFirstMixerConnection() = runTest {
+        val settingsFlow = MutableStateFlow(AppSettings(hasConfiguredRodeMusicChannel = false))
+        val mixerStateFlow = MutableStateFlow(it.parrocchia.coro.domain.mixer.RodeMixerState())
+        val mixerController = mockk<it.parrocchia.coro.data.mixer.rode.RodeMixerController>(relaxed = true)
+        every { repository.appSettings } returns settingsFlow
+        every { mixerController.state } returns mixerStateFlow
+
+        val autoVm = CoroViewModel(
+            repository = repository,
+            playbackController = playbackController,
+            rodeMixerController = mixerController
+        )
+
+        // Quando il mixer si connette per la prima volta con USB 1 (Main) su Fader 7 (idx 6), viene pre-selezionato
+        mixerStateFlow.value = it.parrocchia.coro.domain.mixer.RodeMixerState(
+            status = it.parrocchia.coro.domain.mixer.RodeConnectionStatus.CONNECTED,
+            faders = listOf(
+                it.parrocchia.coro.domain.mixer.RodeVirtualFader(0, 0, "Mic 1", 100),
+                it.parrocchia.coro.domain.mixer.RodeVirtualFader(6, 7, "USB 1 (Main)", 100)
+            )
+        )
+
+        val expectedCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(
+            enabled = true,
+            musicFaderIndices = setOf(6)
+        )
+        verify { mixerController.setAutomationConfig(expectedCfg) }
+        coVerify { repository.setRodeAutomationConfig(expectedCfg, true) }
+        assertTrue(autoVm.toastMessage.value?.contains("USB 1 (Main)") == true)
     }
 
     @Test
@@ -293,6 +325,9 @@ class CoroViewModelTest {
         vm.setRodeChannelMute(0, true)
         vm.setRodeMonitorMute(false)
         vm.setRodeMonitorAutoMute(false)
+        val emptyDisconnectedCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(enabled = false)
+        vm.setRodeAutomationConfig(emptyDisconnectedCfg)
+        coVerify { repository.setRodeAutomationConfig(emptyDisconnectedCfg, false) }
         val autoCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(enabled = true, musicFaderIndices = setOf(6))
         vm.setRodeAutomationConfig(autoCfg)
         assertEquals(autoCfg, vm.rodeMixerState.value.automationConfig)

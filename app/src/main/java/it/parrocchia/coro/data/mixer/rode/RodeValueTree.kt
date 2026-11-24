@@ -105,20 +105,26 @@ class RodeTreeLayout(val root: RodeNode) {
 
     init {
         val rootSeen = mutableMapOf<String, Int>()
-        root.children.forEach { child ->
+        root.children.forEachIndexed { childPos, child ->
             val copyIdx = rootSeen.getOrDefault(child.name, 0)
             rootSeen[child.name] = copyIdx + 1
             val childKey = RodeNodeKey.rootChild(child.name, copyIdx)
-            val childPath = listOf(child.indexInParent)
+            val resolvedChildIdx = if (child.indexInParent != 0 || childPos == 0) child.indexInParent else childPos
+            val childPath = listOf(resolvedChildIdx)
             register(childKey, childPath, child, emptyList(), child.name)
 
             if (child.name in INDEXED_PARENT_BLOCKS) {
                 val innerSeen = mutableMapOf<String, Int>()
-                child.children.forEach { grandChild ->
+                child.children.forEachIndexed { grandChildPos, grandChild ->
                     val innerIdx = innerSeen.getOrDefault(grandChild.name, 0)
                     innerSeen[grandChild.name] = innerIdx + 1
                     val nestedKey = RodeNodeKey.nested(child.name, copyIdx, grandChild.name, innerIdx)
-                    val nestedPath = listOf(child.indexInParent, grandChild.indexInParent)
+                    val resolvedGrandIdx = if (grandChild.indexInParent != 0 || grandChildPos == 0) {
+                        grandChild.indexInParent
+                    } else {
+                        grandChildPos
+                    }
+                    val nestedPath = listOf(resolvedChildIdx, resolvedGrandIdx)
                     register(nestedKey, nestedPath, grandChild, childKey.segments, grandChild.name)
                 }
             }

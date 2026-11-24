@@ -58,15 +58,21 @@ class RodeMixerControllerAndUsbTest {
         val pushQueue = ArrayDeque<ByteArray>()
         var onPermGranted: (() -> Unit)? = null
         var onDetached: (() -> Unit)? = null
+        var onAttached: (() -> Unit)? = null
         var stoppedMonitoring = false
 
         override suspend fun readNextPushReport(timeoutMs: Int): ByteArray? {
             return pushQueue.removeFirstOrNull()
         }
 
-        override fun startMonitoring(onPermissionGranted: () -> Unit, onDeviceDetached: () -> Unit) {
+        override fun startMonitoring(
+            onPermissionGranted: () -> Unit,
+            onDeviceDetached: () -> Unit,
+            onDeviceAttached: () -> Unit
+        ) {
             onPermGranted = onPermissionGranted
             onDetached = onDeviceDetached
+            onAttached = onDeviceAttached
         }
 
         override fun stopMonitoring() {
@@ -428,27 +434,58 @@ class RodeMixerControllerAndUsbTest {
             kotlinx.coroutines.runBlocking { transport.writeReport(RodeHidProtocol.buildDumpRequestPacket()) }
         }
 
-        // Monitoring broadcasts (permission granted & USB detach)
+        // Monitoring broadcasts (permission granted via extra or UsbManager, USB attach & detach)
         var permCallbackCount = 0
         var detachCallbackCount = 0
+        var attachCallbackCount = 0
         transport.startMonitoring(
             onPermissionGranted = { permCallbackCount++ },
-            onDeviceDetached = { detachCallbackCount++ }
+            onDeviceDetached = { detachCallbackCount++ },
+            onDeviceAttached = { attachCallbackCount++ }
         )
         // Idempotent second call
         transport.startMonitoring({}, {})
+
+        // Immutable PendingIntent fallback: senza EXTRA_PERMISSION_GRANTED controlla usbManager.hasPermission
+        every { usbManager.hasPermission(pro2Device) } returns true
+        context.sendBroadcast(
+            Intent(AndroidUsbRodeHidTransport.ACTION_USB_PERMISSION)
+                .setPackage(context.packageName)
+        )
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        assertEquals(1, permCallbackCount)
+
+        every { usbManager.hasPermission(pro2Device) } returns false
+        context.sendBroadcast(
+            Intent(AndroidUsbRodeHidTransport.ACTION_USB_PERMISSION)
+                .setPackage(context.packageName)
+        )
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        assertEquals(1, permCallbackCount)
 
         context.sendBroadcast(
             Intent(AndroidUsbRodeHidTransport.ACTION_USB_PERMISSION)
                 .setPackage(context.packageName)
                 .putExtra(UsbManager.EXTRA_PERMISSION_GRANTED, true)
         )
+        every { usbManager.deviceList } returns hashMapOf("other" to otherDevice)
+        context.sendBroadcast(
+            Intent(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+        )
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        assertEquals(0, attachCallbackCount)
+
+        every { usbManager.deviceList } returns hashMapOf("rode" to pro2Device)
+        context.sendBroadcast(
+            Intent(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+        )
         context.sendBroadcast(
             Intent(UsbManager.ACTION_USB_DEVICE_DETACHED)
                 .putExtra(UsbManager.EXTRA_DEVICE, pro2Device)
         )
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
-        assertEquals(1, permCallbackCount)
+        assertEquals(2, permCallbackCount)
+        assertEquals(1, attachCallbackCount)
         assertEquals(1, detachCallbackCount)
         assertFalse(transport.isConnected)
         transport.stopMonitoring()
@@ -713,6 +750,61 @@ class RodeMixerControllerAndUsbTest {
         // Solo idx 0 e idx 6 vengono inviati (idx 3 ignorato)
         assertEquals(beforeStop + 2, transport.writtenPackets.size)
         controller.disconnect()
+    }
+
+    @Test
+    fun controller_autoConnectOnInitAndAttachAndDetectDefaultMusicFader() = runTest {
+        val testScope = TestScope(StandardTestDispatcher(testScheduler))
+        var dumps = 0
+        val transport = FakeRodeHidTransport(
+            dumpProvider = {
+                dumps++
+                RodeValueTreeCodec.encodeNode(RodeValueTreeAndProtocolTest.buildRealisticPro2Tree())
+            }
+        )
+        val controller = RodeMixerController(
+            transport = transport,
+            scope = testScope,
+            writeSpacingMs = 0L,
+            autoConnectOnInit = true
+        )
+        testScope.advanceUntilIdle()
+        assertEquals(RodeConnectionStatus.CONNECTED, controller.state.value.status)
+        assertEquals(1, dumps)
+
+        // connectIfDisconnected quando già connesso è no-op immediato (nessun nuovo dump)
+        assertTrue(controller.connectIfDisconnected().isSuccess)
+        assertEquals(1, dumps)
+
+        // Detach e ri-attach automatico via callback USB + triggerAutoConnect
+        transport.onDetached?.invoke()
+        testScope.advanceUntilIdle()
+        assertEquals(RodeConnectionStatus.DISCONNECTED, controller.state.value.status)
+
+        transport.onAttached?.invoke()
+        testScope.advanceUntilIdle()
+        assertEquals(RodeConnectionStatus.CONNECTED, controller.state.value.status)
+        assertEquals(2, dumps)
+
+        controller.disconnect()
+        transport.connectBehavior = { throw RuntimeException("USB crash") }
+        controller.triggerAutoConnect()
+        testScope.advanceUntilIdle()
+        assertEquals(RodeConnectionStatus.ERROR, controller.state.value.status)
+        assertEquals("USB crash", controller.state.value.errorMessage)
+
+        // Verifica priorità detectDefaultMusicFader (USB 1 Main -> Music -> Chat -> Bluetooth; oppure Bluetooth first)
+        assertNull(RodeAutomationConfig.detectDefaultMusicFader(emptyList()))
+        val faders = listOf(
+            it.parrocchia.coro.domain.mixer.RodeVirtualFader(0, 0, "Mic 1", 100),
+            it.parrocchia.coro.domain.mixer.RodeVirtualFader(4, 10, "Bluetooth", 100),
+            it.parrocchia.coro.domain.mixer.RodeVirtualFader(5, 8, "USB 1 Chat", 100),
+            it.parrocchia.coro.domain.mixer.RodeVirtualFader(6, 7, "USB 1 (Main)", 100)
+        )
+        assertEquals(6, RodeAutomationConfig.detectDefaultMusicFader(faders, preferBluetooth = false)?.faderIndex)
+        assertEquals(4, RodeAutomationConfig.detectDefaultMusicFader(faders, preferBluetooth = true)?.faderIndex)
+        val onlyMics = listOf(it.parrocchia.coro.domain.mixer.RodeVirtualFader(0, 0, "Mic 1", 100))
+        assertNull(RodeAutomationConfig.detectDefaultMusicFader(onlyMics))
     }
 
     private fun mockEndpoint(type: Int, direction: Int): UsbEndpoint {

@@ -56,6 +56,43 @@ data class RodeAutomationConfig(
         (musicFaderIndices + alwaysMuteOnStopFaderIndices + preset.unmuteFaderIndices + previouslyOpenedFaders)
             .filter { it in 0 until RodeInputVolumeChannel.TOTAL_FADER_COUNT }
             .sorted()
+
+    companion object {
+        const val SOURCE_USB1_MAIN = 7
+        const val SOURCE_USB1_CHAT = 8
+        const val SOURCE_BLUETOOTH = 10
+        const val SOURCE_USB_MUSIC = 13
+
+        private val DEFAULT_USB_PRIORITY = listOf(
+            SOURCE_USB1_MAIN,
+            SOURCE_USB_MUSIC,
+            SOURCE_USB1_CHAT,
+            SOURCE_BLUETOOTH
+        )
+        private val BLUETOOTH_FIRST_PRIORITY = listOf(
+            SOURCE_BLUETOOTH,
+            SOURCE_USB1_MAIN,
+            SOURCE_USB_MUSIC,
+            SOURCE_USB1_CHAT
+        )
+
+        /**
+         * Individua automaticamente il fader del canale musica tra quelli assegnati sul mixer,
+         * privilegiando `USB 1 (Main)` (o `Bluetooth` se l'uscita audio selezionata è Bluetooth).
+         */
+        fun detectDefaultMusicFader(
+            assignedFaders: List<RodeVirtualFader>,
+            preferBluetooth: Boolean = false
+        ): RodeVirtualFader? {
+            if (assignedFaders.isEmpty()) return null
+            val priority = if (preferBluetooth) BLUETOOTH_FIRST_PRIORITY else DEFAULT_USB_PRIORITY
+            for (code in priority) {
+                val match = assignedFaders.firstOrNull { it.assignedSourceCode == code }
+                if (match != null) return match
+            }
+            return null
+        }
+    }
 }
 
 object RodeAutomationConfigCodec {

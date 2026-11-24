@@ -19,7 +19,8 @@ interface RodeHidTransport {
 
     fun startMonitoring(
         onPermissionGranted: () -> Unit,
-        onDeviceDetached: () -> Unit
+        onDeviceDetached: () -> Unit,
+        onDeviceAttached: () -> Unit = {}
     ) = Unit
 
     fun stopMonitoring() = Unit

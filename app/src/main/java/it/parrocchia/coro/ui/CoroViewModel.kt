@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -62,6 +63,8 @@ class CoroViewModel(
     private val _toastMessage = MutableStateFlow<String?>(null)
     val toastMessage: StateFlow<String?> = _toastMessage.asStateFlow()
 
+    private var autoSelectedMusicChannelInSession = false
+
     init {
         viewModelScope.launch {
             repository.ensureInitialized()
@@ -74,11 +77,45 @@ class CoroViewModel(
                         selectedRoute = appSettings.audioOutputRoute
                     )
                 }
-                rodeMixerController?.setAutomationConfig(appSettings.rodeAutomationConfig)
-                if (rodeMixerController == null) {
-                    fallbackMixerState.value = fallbackMixerState.value.copy(
-                        automationConfig = appSettings.rodeAutomationConfig
+                val skipStalePreAutoSave = autoSelectedMusicChannelInSession &&
+                    !appSettings.hasConfiguredRodeMusicChannel &&
+                    appSettings.rodeAutomationConfig.musicFaderIndices.isEmpty()
+                if (!skipStalePreAutoSave) {
+                    rodeMixerController?.setAutomationConfig(appSettings.rodeAutomationConfig)
+                    if (rodeMixerController == null) {
+                        fallbackMixerState.value = fallbackMixerState.value.copy(
+                            automationConfig = appSettings.rodeAutomationConfig
+                        )
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            combine(repository.appSettings, rodeMixerState) { appSettings, mixerState ->
+                appSettings to mixerState
+            }.collectLatest { (appSettings, mixerState) ->
+                if (!autoSelectedMusicChannelInSession &&
+                    !appSettings.hasConfiguredRodeMusicChannel &&
+                    appSettings.rodeAutomationConfig.musicFaderIndices.isEmpty() &&
+                    mixerState.isConnected &&
+                    mixerState.assignedFaders.isNotEmpty()
+                ) {
+                    val detected = RodeAutomationConfig.detectDefaultMusicFader(
+                        assignedFaders = mixerState.assignedFaders,
+                        preferBluetooth = appSettings.audioOutputRoute == AudioOutputRoute.BLUETOOTH
                     )
+                    if (detected != null) {
+                        autoSelectedMusicChannelInSession = true
+                        val updatedConfig = appSettings.rodeAutomationConfig.copy(
+                            enabled = true,
+                            musicFaderIndices = setOf(detected.faderIndex)
+                        )
+                        rodeMixerController?.setAutomationConfig(updatedConfig)
+                        repository.setRodeAutomationConfig(updatedConfig, markChannelsConfigured = true)
+                        postToast(
+                            "Canale musica configurato: F${detected.displayNumber} · ${detected.assignedLabel}"
+                        )
+                    }
                 }
             }
         }
@@ -210,7 +247,7 @@ class CoroViewModel(
         viewModelScope.launch {
             playbackController.stopPreviewIfActive()
             repository.updateSongDefaultsDirect(songId, settings, maxDurationMs)
-            postToast("Preferenze predefinite del brano salvate")
+            postToast("Preferenze predefinite salvate e sincronizzate con la messa")
         }
     }
 
@@ -364,8 +401,11 @@ class CoroViewModel(
         if (rodeMixerController == null) {
             fallbackMixerState.value = fallbackMixerState.value.copy(automationConfig = config)
         }
+        val markConfigured = rodeMixerState.value.isConnected ||
+            config.musicFaderIndices.isNotEmpty() ||
+            config.alwaysMuteOnStopFaderIndices.isNotEmpty()
         viewModelScope.launch {
-            repository.setRodeAutomationConfig(config)
+            repository.setRodeAutomationConfig(config, markChannelsConfigured = markConfigured)
         }
     }
 

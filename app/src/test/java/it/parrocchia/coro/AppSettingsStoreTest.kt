@@ -133,6 +133,13 @@ class AppSettingsStoreTest {
             store.settings.first().audioOutputRoute
         )
 
+        assertFalse(store.settings.first().hasConfiguredRodeMusicChannel)
+        store.setRodeAutomationConfig(
+            it.parrocchia.coro.domain.mixer.RodeAutomationConfig(),
+            markChannelsConfigured = false
+        )
+        assertFalse(store.settings.first().hasConfiguredRodeMusicChannel)
+
         val autoCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(
             enabled = true,
             musicFaderIndices = setOf(6),
@@ -140,6 +147,7 @@ class AppSettingsStoreTest {
         )
         store.setRodeAutomationConfig(autoCfg)
         assertEquals(autoCfg, store.settings.first().rodeAutomationConfig)
+        assertTrue(store.settings.first().hasConfiguredRodeMusicChannel)
     }
 
     @Test

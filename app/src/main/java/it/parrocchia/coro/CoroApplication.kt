@@ -36,7 +36,8 @@ class AppContainer(application: Application) {
     )
     val audioOutputRouter: AudioOutputRouter = AudioOutputRouter(application)
     val rodeMixerController: RodeMixerController = RodeMixerController(
-        transport = AndroidUsbRodeHidTransport(application)
+        transport = AndroidUsbRodeHidTransport(application),
+        autoConnectOnInit = true
     )
     val mixerController: MixerController = rodeMixerController
     val playbackController: PlaybackController = PlaybackController(

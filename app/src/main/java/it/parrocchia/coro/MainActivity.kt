@@ -1,6 +1,8 @@
 package it.parrocchia.coro
 
+import android.content.Intent
 import android.graphics.Color as AndroidColor
+import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
@@ -60,6 +62,9 @@ class MainActivity : ComponentActivity() {
         }
 
         val appContainer = (application as CoroApplication).container
+        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            appContainer.rodeMixerController.triggerAutoConnect()
+        }
 
         setContent {
             val windowSizeClass = calculateWindowSizeClass(this)
@@ -70,6 +75,14 @@ class MainActivity : ComponentActivity() {
                     windowSizeClass = windowSizeClass
                 )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            (application as CoroApplication).container.rodeMixerController.triggerAutoConnect()
         }
     }
 
