@@ -81,6 +81,9 @@ import it.parrocchia.coro.audio.PlaybackController
 import it.parrocchia.coro.audio.PlaybackState
 import it.parrocchia.coro.data.db.SongEntity
 import it.parrocchia.coro.data.prefs.AppSettings
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
+import it.parrocchia.coro.domain.mixer.RodeMixerPresetCodec
+import it.parrocchia.coro.domain.mixer.RodeVirtualFader
 import it.parrocchia.coro.domain.model.AudioFormat
 import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.theme.CoroColors
@@ -99,7 +102,9 @@ fun LibraryScreen(
     onRescanFolder: () -> Unit,
     onPickSongForPhase: ((SongEntity) -> Unit)?,
     onSaveSongDefaults: (SongEntity, TrackSettings) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    availableMixerFaders: List<RodeVirtualFader> = emptyList(),
+    automationConfig: RodeAutomationConfig = RodeAutomationConfig()
 ) {
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
@@ -402,7 +407,9 @@ fun LibraryScreen(
                 onSaveSongDefaults(song, newSettings)
                 editingSongId = null
             },
-            onDismiss = { editingSongId = null }
+            onDismiss = { editingSongId = null },
+            availableMixerFaders = availableMixerFaders,
+            automationConfig = automationConfig
         )
     }
 }
@@ -459,6 +466,7 @@ private fun LibrarySongRow(
                     if (song.defaultTransposeSemitones != 0) add(TrackSettings.formatTranspose(song.defaultTransposeSemitones))
                     if (song.defaultStartOffsetMs > 0L) add("Attacco ${TrackSettings.formatTimeMs(song.defaultStartOffsetMs)}")
                     add("Sfuma ${TrackSettings.formatFadeSec(song.defaultFadeOutMs)}")
+                    RodeMixerPresetCodec.decode(song.defaultMixerConfigJson)?.badgeLabel()?.let { add(it) }
                 }.joinToString(" · ")
                 Text(
                     text = meta,

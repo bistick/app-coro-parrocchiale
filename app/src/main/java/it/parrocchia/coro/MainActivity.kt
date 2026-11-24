@@ -39,6 +39,7 @@ import it.parrocchia.coro.ui.CoroViewModel
 import it.parrocchia.coro.ui.screens.LibraryScreen
 import it.parrocchia.coro.ui.screens.LiveExecutionScreen
 import it.parrocchia.coro.ui.screens.PlannerScreen
+import it.parrocchia.coro.ui.screens.RodeMixerScreen
 import it.parrocchia.coro.ui.screens.SettingsScreen
 import it.parrocchia.coro.ui.theme.CoroColors
 import it.parrocchia.coro.ui.theme.CoroTheme
@@ -117,6 +118,7 @@ private object Routes {
     const val PLANNER = "planner"
     const val LIVE = "live"
     const val SETTINGS = "settings"
+    const val MIXER = "mixer"
     const val LIBRARY_BASE = "library"
     const val LIBRARY_ROUTE = "library?phaseId={phaseId}&phaseName={phaseName}"
 
@@ -140,6 +142,8 @@ private fun CoroRootApp(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
+    val rodeMixerState by viewModel.rodeMixerState.collectAsStateWithLifecycle()
+    val audioOutputStatus by viewModel.audioOutputStatus.collectAsStateWithLifecycle()
 
     LaunchedEffect(toastMessage) {
         val msg = toastMessage ?: return@LaunchedEffect
@@ -190,6 +194,10 @@ private fun CoroRootApp(
                         onApplySavedTemplate = viewModel::applySavedTemplate,
                         onDeleteSavedTemplate = viewModel::deleteSavedTemplate,
                         onOpenLibrary = { navController.navigate(Routes.LIBRARY_BASE) },
+                        onOpenMixer = { navController.navigate(Routes.MIXER) },
+                        isMixerConnected = rodeMixerState.isConnected,
+                        availableMixerFaders = rodeMixerState.assignedFaders,
+                        automationConfig = settings.rodeAutomationConfig,
                         onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                         onEnterLiveMode = {
                             viewModel.playbackController.stopPreviewIfActive()
@@ -209,6 +217,8 @@ private fun CoroRootApp(
                         onStopImmediate = viewModel::stopImmediateLive,
                         onResetPlayedFlags = viewModel::resetSessionPlayed,
                         onDismissError = viewModel::dismissPlaybackError,
+                        onOpenMixer = { navController.navigate(Routes.MIXER) },
+                        isMixerConnected = rodeMixerState.isConnected,
                         onExitLiveMode = { navController.popBackStack() }
                     )
                 }
@@ -248,7 +258,9 @@ private fun CoroRootApp(
                         onSaveSongDefaults = { song, newSettings ->
                             viewModel.saveSongDefaultsOnly(song.id, newSettings, song.durationMs)
                         },
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        availableMixerFaders = rodeMixerState.assignedFaders,
+                        automationConfig = settings.rodeAutomationConfig
                     )
                 }
 
@@ -264,6 +276,33 @@ private fun CoroRootApp(
                         onSetHoldDurationMs = viewModel::setHoldDurationMs,
                         onSetDefaultFadeOutMs = viewModel::setDefaultFadeOutMs,
                         onSetKeepScreenOn = viewModel::setKeepScreenOnInLive,
+                        onOpenMixer = { navController.navigate(Routes.MIXER) },
+                        isMixerConnected = rodeMixerState.isConnected,
+                        availableMixerFaders = rodeMixerState.assignedFaders,
+                        onUpdateRodeAutomationConfig = viewModel::setRodeAutomationConfig,
+                        onMuteAllRodeFaders = viewModel::muteAllRodeFaders,
+                        audioOutputStatus = audioOutputStatus,
+                        onSelectAudioOutputRoute = viewModel::setAudioOutputRoute,
+                        onRefreshAudioOutputDevices = viewModel::refreshAudioOutputDevices,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+
+                composable(Routes.MIXER) {
+                    RodeMixerScreen(
+                        mixerState = rodeMixerState,
+                        onConnect = viewModel::connectRodeMixer,
+                        onRefresh = viewModel::refreshRodeMixer,
+                        onDisconnect = viewModel::disconnectRodeMixer,
+                        onSetChannelMute = viewModel::setRodeChannelMute,
+                        onDismissError = viewModel::dismissRodeMixerError,
+                        onUpdateAutomationConfig = viewModel::setRodeAutomationConfig,
+                        onMuteAllFaders = viewModel::muteAllRodeFaders,
+                        onSetMonitorMute = viewModel::setRodeMonitorMute,
+                        onSetMonitorAutoMute = viewModel::setRodeMonitorAutoMute,
+                        audioOutputStatus = audioOutputStatus,
+                        onSelectAudioOutputRoute = viewModel::setAudioOutputRoute,
+                        onRefreshAudioOutputDevices = viewModel::refreshAudioOutputDevices,
                         onBack = { navController.popBackStack() }
                     )
                 }

@@ -30,6 +30,7 @@ data class SongEntity(
     val defaultStartOffsetMs: Long = 0L,
     val defaultTransposeSemitones: Int = 0,
     val defaultVolume: Float = TrackSettings.DEFAULT_VOLUME,
+    val defaultMixerConfigJson: String? = null,
     val isDemo: Boolean = false,
     val lastModifiedMs: Long = 0L
 ) {
@@ -41,7 +42,8 @@ data class SongEntity(
             fadeOutMs = defaultFadeOutMs,
             startOffsetMs = defaultStartOffsetMs,
             transposeSemitones = defaultTransposeSemitones,
-            volume = defaultVolume
+            volume = defaultVolume,
+            mixerConfigJson = defaultMixerConfigJson
         )
 }
 
@@ -125,7 +127,8 @@ data class PlannedTrackEntity(
             fadeOutMs = fadeOutMs,
             startOffsetMs = startOffsetMs,
             transposeSemitones = transposeSemitones,
-            volume = volume
+            volume = volume,
+            mixerConfigJson = mixerConfigJson
         )
 }
 

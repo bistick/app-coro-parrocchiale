@@ -1,6 +1,7 @@
 package it.parrocchia.coro.audio.media
 
 import android.content.Context
+import android.media.AudioDeviceInfo
 import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import androidx.media3.common.AudioAttributes
@@ -35,6 +36,7 @@ interface AudioPlaybackEngine {
     fun updateLiveTranspose(semitones: Int)
     fun updateLiveVolume(volume: Float)
     fun seekLive(positionMs: Long)
+    fun setPreferredOutputDevice(device: AudioDeviceInfo?) = Unit
 }
 
 /**
@@ -60,6 +62,8 @@ class ExoAudioPlayer(private val context: Context) : AudioPlaybackEngine {
     private var isFading: Boolean = false
     private var currentFadeProgress: Float = 0f
     private var activeListener: Listener? = null
+    @Volatile
+    private var preferredOutputDevice: AudioDeviceInfo? = null
 
     override fun start(
         uriString: String,
@@ -85,6 +89,7 @@ class ExoAudioPlayer(private val context: Context) : AudioPlaybackEngine {
                 .build()
 
             exoPlayer = player
+            runCatching { player.setPreferredAudioDevice(preferredOutputDevice) }
 
             player.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -166,6 +171,13 @@ class ExoAudioPlayer(private val context: Context) : AudioPlaybackEngine {
     override fun seekLive(positionMs: Long) {
         scope.launch {
             exoPlayer?.seekTo(positionMs.coerceAtLeast(0L))
+        }
+    }
+
+    override fun setPreferredOutputDevice(device: AudioDeviceInfo?) {
+        preferredOutputDevice = device
+        scope.launch {
+            runCatching { exoPlayer?.setPreferredAudioDevice(device) }
         }
     }
 

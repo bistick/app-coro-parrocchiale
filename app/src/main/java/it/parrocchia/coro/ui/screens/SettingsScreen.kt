@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -68,8 +69,14 @@ import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import it.parrocchia.coro.BuildConfig
 import it.parrocchia.coro.data.prefs.AppSettings
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
+import it.parrocchia.coro.domain.mixer.RodeVirtualFader
+import it.parrocchia.coro.domain.model.AudioOutputRoute
+import it.parrocchia.coro.domain.model.AudioOutputStatus
 import it.parrocchia.coro.domain.model.TrackSettings
+import it.parrocchia.coro.ui.components.AudioOutputSelectorCard
 import it.parrocchia.coro.ui.components.HoldToConfirmSurface
+import it.parrocchia.coro.ui.components.MixerMuteAutomationCard
 import it.parrocchia.coro.ui.theme.CoroColors
 import kotlin.math.roundToInt
 
@@ -116,7 +123,15 @@ fun SettingsScreen(
     onSetHoldDurationMs: (Int) -> Unit,
     onSetDefaultFadeOutMs: (Int) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenMixer: () -> Unit = {},
+    isMixerConnected: Boolean = false,
+    availableMixerFaders: List<RodeVirtualFader> = emptyList(),
+    onUpdateRodeAutomationConfig: (RodeAutomationConfig) -> Unit = {},
+    onMuteAllRodeFaders: (() -> Unit)? = null,
+    audioOutputStatus: AudioOutputStatus = AudioOutputStatus(),
+    onSelectAudioOutputRoute: (AudioOutputRoute) -> Unit = {},
+    onRefreshAudioOutputDevices: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
@@ -477,7 +492,51 @@ fun SettingsScreen(
                 }
             }
 
-            // 5. Info e predisposizioni future
+            // 5. Uscita audio (Bluetooth / USB Audio / Altoparlante)
+            item(key = "audio_output", contentType = "settings_card") {
+                AudioOutputSelectorCard(
+                    status = audioOutputStatus,
+                    onSelectRoute = onSelectAudioOutputRoute,
+                    onRefreshDevices = onRefreshAudioOutputDevices
+                )
+            }
+
+            // 6. Automazione Muto (RØDECaster Pro II)
+            item(key = "rode_mute_automation", contentType = "settings_card") {
+                MixerMuteAutomationCard(
+                    config = settings.rodeAutomationConfig,
+                    assignedFaders = availableMixerFaders,
+                    isConnected = isMixerConnected,
+                    onUpdateConfig = onUpdateRodeAutomationConfig,
+                    onMuteAllFaders = onMuteAllRodeFaders
+                )
+            }
+
+            // 7. Controllo Mixer RØDECaster Pro II
+            item(key = "rode_mixer", contentType = "settings_card") {
+                SettingsCard(title = "Mixer RØDECaster Pro II") {
+                    Text(
+                        text = if (isMixerConnected) {
+                            "Connesso via USB 1 · Controllo Muto attivo."
+                        } else {
+                            "Collega il RØDECaster Pro II sulla porta USB 1 per gestire i Muto dei canali e l'automazione live."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (isMixerConnected) CoroColors.PlayedAccent else CoroColors.TextSecondary
+                    )
+                    Button(
+                        onClick = onOpenMixer,
+                        contentPadding = CompactButtonPadding,
+                        modifier = Modifier.heightIn(min = 44.dp)
+                    ) {
+                        Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Apri controllo mixer", maxLines = 1)
+                    }
+                }
+            }
+
+            // 8. Info
             item(key = "info", contentType = "settings_card") {
                 SettingsCard(title = "Informazioni") {
                     Text(
@@ -486,7 +545,7 @@ fun SettingsScreen(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Motore MIDI FluidSynth (SF2/SF3) · Preset di Messa liturgici e personalizzati · Predisposto per controllo mixer RØDECaster Pro II.",
+                        text = "Motore MIDI FluidSynth (SF2/SF3) · Preset di Messa liturgici e personalizzati · Automazione Muto RØDECaster Pro II via USB.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = CoroColors.TextSecondary
                     )

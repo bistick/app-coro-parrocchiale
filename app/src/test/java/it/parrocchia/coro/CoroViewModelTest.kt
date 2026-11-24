@@ -59,6 +59,7 @@ class CoroViewModelTest {
         every { repository.allSongs } returns MutableStateFlow<List<SongEntity>>(emptyList())
         every { repository.appSettings } returns MutableStateFlow(AppSettings())
         every { playbackController.state } returns MutableStateFlow(PlaybackState())
+        every { playbackController.audioOutputRouter } returns null
 
         vm = CoroViewModel(repository, playbackController)
     }
@@ -237,10 +238,67 @@ class CoroViewModelTest {
     @Test
     fun factory_createsCoroViewModelFromContainer() {
         val container = mockk<AppContainer>()
+        val mixerController = mockk<it.parrocchia.coro.data.mixer.rode.RodeMixerController>(relaxed = true)
+        val audioRouter = mockk<it.parrocchia.coro.audio.AudioOutputRouter>(relaxed = true)
         every { container.repository } returns repository
         every { container.playbackController } returns playbackController
+        every { container.rodeMixerController } returns mixerController
+        every { container.audioOutputRouter } returns audioRouter
+        every { mixerController.state } returns MutableStateFlow(it.parrocchia.coro.domain.mixer.RodeMixerState())
+        every { audioRouter.status } returns MutableStateFlow(it.parrocchia.coro.domain.model.AudioOutputStatus())
 
         val created = CoroViewModel.Factory(container).create(CoroViewModel::class.java)
         assertNotNull(created)
+
+        created.connectRodeMixer()
+        created.refreshRodeMixer()
+        created.disconnectRodeMixer()
+        created.setRodeChannelMute(0, true)
+        created.setRodeMonitorMute(false)
+        created.setRodeMonitorAutoMute(false)
+        val autoCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(
+            enabled = true,
+            musicFaderIndices = setOf(6),
+            alwaysMuteOnStopFaderIndices = setOf(0)
+        )
+        created.setRodeAutomationConfig(autoCfg)
+        coEvery { mixerController.muteAllAssignedFaders() } returns Result.success(4)
+        created.muteAllRodeFaders()
+        created.dismissRodeMixerError()
+        created.setAudioOutputRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH)
+        created.refreshAudioOutputDevices()
+
+        coVerify { mixerController.connect() }
+        coVerify { mixerController.refresh() }
+        verify { mixerController.disconnect() }
+        coVerify { mixerController.setChannelMute(0, true) }
+        coVerify { mixerController.setMonitorMute(false) }
+        coVerify { mixerController.setMonitorAutoMute(false) }
+        verify { mixerController.setAutomationConfig(autoCfg) }
+        coVerify { repository.setRodeAutomationConfig(autoCfg) }
+        coVerify { mixerController.muteAllAssignedFaders() }
+        verify { mixerController.clearError() }
+        verify { audioRouter.setPreferredRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH) }
+        verify { audioRouter.refreshDevices() }
+        coVerify { repository.setAudioOutputRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH) }
+    }
+
+    @Test
+    fun mixerActions_noOpSafelyWhenControllerNotProvided() {
+        assertEquals(it.parrocchia.coro.domain.mixer.RodeConnectionStatus.DISCONNECTED, vm.rodeMixerState.value.status)
+        assertEquals(it.parrocchia.coro.domain.model.AudioOutputRoute.AUTO, vm.audioOutputStatus.value.selectedRoute)
+        vm.connectRodeMixer()
+        vm.refreshRodeMixer()
+        vm.disconnectRodeMixer()
+        vm.setRodeChannelMute(0, true)
+        vm.setRodeMonitorMute(false)
+        vm.setRodeMonitorAutoMute(false)
+        val autoCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(enabled = true, musicFaderIndices = setOf(6))
+        vm.setRodeAutomationConfig(autoCfg)
+        assertEquals(autoCfg, vm.rodeMixerState.value.automationConfig)
+        vm.muteAllRodeFaders()
+        vm.dismissRodeMixerError()
+        vm.setAudioOutputRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.USB)
+        vm.refreshAudioOutputDevices()
     }
 }

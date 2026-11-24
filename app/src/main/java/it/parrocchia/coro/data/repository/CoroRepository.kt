@@ -12,6 +12,8 @@ import it.parrocchia.coro.data.library.ScanSummary
 import it.parrocchia.coro.data.library.SoundFontManager
 import it.parrocchia.coro.data.prefs.AppSettings
 import it.parrocchia.coro.data.prefs.AppSettingsStore
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
+import it.parrocchia.coro.domain.model.AudioOutputRoute
 import it.parrocchia.coro.domain.model.MassPreset
 import it.parrocchia.coro.domain.model.MassPresetCatalog
 import it.parrocchia.coro.domain.model.StandardPhaseType
@@ -357,7 +359,8 @@ class CoroRepository(
                 startOffsetMs = song.defaultStartOffsetMs,
                 transposeSemitones = song.defaultTransposeSemitones,
                 volume = song.defaultVolume,
-                playedInSession = false
+                playedInSession = false,
+                mixerConfigJson = song.defaultMixerConfigJson
             )
         )
     }
@@ -395,7 +398,8 @@ class CoroRepository(
             startOffsetMs = safe.startOffsetMs,
             transposeSemitones = safe.transposeSemitones,
             volume = safe.volume,
-            saveAsSongDefault = saveAsSongDefault
+            saveAsSongDefault = saveAsSongDefault,
+            mixerConfigJson = safe.mixerConfigJson
         )
     }
 
@@ -408,6 +412,7 @@ class CoroRepository(
             transposeSemitones = safe.transposeSemitones,
             volume = safe.volume
         )
+        dao.updateSongDefaultMixerConfig(songId = songId, mixerConfigJson = safe.mixerConfigJson)
     }
 
     suspend fun markTrackPlayed(trackId: Long, played: Boolean) {
@@ -439,6 +444,8 @@ class CoroRepository(
     suspend fun setHoldDurationMs(durationMs: Int) = settingsStore.setHoldDurationMs(durationMs)
     suspend fun setDefaultFadeOutMs(fadeMs: Int) = settingsStore.setDefaultFadeOutMs(fadeMs)
     suspend fun setKeepScreenOnInLive(enabled: Boolean) = settingsStore.setKeepScreenOnInLive(enabled)
+    suspend fun setAudioOutputRoute(route: AudioOutputRoute) = settingsStore.setAudioOutputRoute(route)
+    suspend fun setRodeAutomationConfig(config: RodeAutomationConfig) = settingsStore.setRodeAutomationConfig(config)
 
     companion object {
         const val CUSTOM_TEMPLATE_PREFIX = "custom:"

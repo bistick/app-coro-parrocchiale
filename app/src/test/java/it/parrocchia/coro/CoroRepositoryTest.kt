@@ -315,10 +315,36 @@ class CoroRepositoryTest {
         repository.setHoldDurationMs(550)
         repository.setDefaultFadeOutMs(4000)
         repository.setKeepScreenOnInLive(false)
+        val autoCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(
+            enabled = true,
+            musicFaderIndices = setOf(6),
+            alwaysMuteOnStopFaderIndices = setOf(0)
+        )
+        repository.setRodeAutomationConfig(autoCfg)
         val s = repository.appSettings.first()
         assertEquals(550, s.holdDurationMs)
         assertEquals(4000, s.defaultFadeOutMs)
         assertFalse(s.keepScreenOnInLive)
+        assertEquals(autoCfg, s.rodeAutomationConfig)
+
+        // Default mixerConfigJson on song is inherited by addSongToPhase
+        repository.ensureInitialized()
+        val firstSong = repository.allSongs.first().first()
+        val soloistJson = """{"unmuteFaderIndices":[0]}"""
+        repository.updateSongDefaultsDirect(
+            songId = firstSong.id,
+            settings = TrackSettings(mixerConfigJson = soloistJson),
+            maxDurationMs = 60_000L
+        )
+        val updatedSong = repository.allSongs.first().first { it.id == firstSong.id }
+        assertEquals(soloistJson, updatedSong.defaultMixerConfigJson)
+        val activePlan = repository.activeMassPlan.first()!!
+        val phaseId = activePlan.enabledPhases.first().phase.id
+        val addedTrackId = repository.addSongToPhase(phaseId, updatedSong)
+        val addedTrack = repository.activeMassPlan.first()!!
+            .enabledPhases.flatMap { it.tracks }
+            .first { it.track.id == addedTrackId }
+        assertEquals(soloistJson, addedTrack.track.mixerConfigJson)
 
         // Companion helpers
         val title = CoroRepository.defaultMassTitle(LocalDate.of(2026, 12, 25), "Messa di Natale")

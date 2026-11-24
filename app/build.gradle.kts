@@ -123,6 +123,7 @@ val jacocoBusinessLogicIncludes = listOf(
     "it/parrocchia/coro/domain/**",
     "it/parrocchia/coro/data/**",
     "it/parrocchia/coro/ui/CoroViewModel*",
+    "it/parrocchia/coro/audio/AudioOutputRouter*",
     "it/parrocchia/coro/audio/FadeCurve*",
     "it/parrocchia/coro/audio/PlaybackState*",
     "it/parrocchia/coro/audio/PlaybackStatus*",

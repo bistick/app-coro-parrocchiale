@@ -117,6 +117,29 @@ class AppSettingsStoreTest {
         assertFalse(store.settings.first().keepScreenOnInLive)
         store.setKeepScreenOnInLive(true)
         assertTrue(store.settings.first().keepScreenOnInLive)
+
+        assertEquals(
+            it.parrocchia.coro.domain.model.AudioOutputRoute.AUTO,
+            store.settings.first().audioOutputRoute
+        )
+        store.setAudioOutputRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH)
+        assertEquals(
+            it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH,
+            store.settings.first().audioOutputRoute
+        )
+        store.setAudioOutputRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.USB)
+        assertEquals(
+            it.parrocchia.coro.domain.model.AudioOutputRoute.USB,
+            store.settings.first().audioOutputRoute
+        )
+
+        val autoCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(
+            enabled = true,
+            musicFaderIndices = setOf(6),
+            alwaysMuteOnStopFaderIndices = setOf(0, 1)
+        )
+        store.setRodeAutomationConfig(autoCfg)
+        assertEquals(autoCfg, store.settings.first().rodeAutomationConfig)
     }
 
     @Test

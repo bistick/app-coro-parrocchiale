@@ -99,6 +99,9 @@ import it.parrocchia.coro.data.db.MassPlanWithPhases
 import it.parrocchia.coro.data.db.PhaseWithTracks
 import it.parrocchia.coro.data.db.PlannedTrackWithSong
 import it.parrocchia.coro.data.repository.CoroRepository
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
+import it.parrocchia.coro.domain.mixer.RodeMixerPresetCodec
+import it.parrocchia.coro.domain.mixer.RodeVirtualFader
 import it.parrocchia.coro.domain.model.AudioFormat
 import it.parrocchia.coro.domain.model.MassPreset
 import it.parrocchia.coro.domain.model.TrackSettings
@@ -127,7 +130,11 @@ fun PlannerScreen(
     onDeleteSavedTemplate: (templateId: Long) -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenSettings: () -> Unit,
-    onEnterLiveMode: () -> Unit
+    onEnterLiveMode: () -> Unit,
+    onOpenMixer: () -> Unit = {},
+    isMixerConnected: Boolean = false,
+    availableMixerFaders: List<RodeVirtualFader> = emptyList(),
+    automationConfig: RodeAutomationConfig = RodeAutomationConfig()
 ) {
     var showPhasesSheet by rememberSaveable { mutableStateOf(false) }
     var showPresetsSheet by rememberSaveable { mutableStateOf(false) }
@@ -223,6 +230,13 @@ fun PlannerScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenMixer) {
+                        Icon(
+                            Icons.Default.Tune,
+                            contentDescription = "Mixer RØDECaster Pro II",
+                            tint = if (isMixerConnected) CoroColors.PlayedAccent else CoroColors.TextPrimary
+                        )
+                    }
                     IconButton(onClick = onOpenLibrary) {
                         Icon(Icons.Default.LibraryMusic, contentDescription = "Libreria")
                     }
@@ -417,7 +431,9 @@ fun PlannerScreen(
                 )
                 editingTrackId = null
             },
-            onDismiss = { editingTrackId = null }
+            onDismiss = { editingTrackId = null },
+            availableMixerFaders = availableMixerFaders,
+            automationConfig = automationConfig
         )
     }
 
@@ -648,6 +664,16 @@ private fun PhasePlannerCard(
                                     ParamPill(
                                         text = "Vol ${TrackSettings.formatVolumePercent(item.track.volume)}",
                                         bg = CoroColors.SurfaceHighlight
+                                    )
+                                }
+                                val mixerBadge = remember(item.track.mixerConfigJson) {
+                                    RodeMixerPresetCodec.decode(item.track.mixerConfigJson)?.badgeLabel()
+                                }
+                                if (mixerBadge != null) {
+                                    ParamPill(
+                                        text = mixerBadge,
+                                        bg = CoroColors.GoldDim,
+                                        fg = CoroColors.Gold
                                     )
                                 }
                             }

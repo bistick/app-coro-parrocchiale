@@ -8,6 +8,9 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfigCodec
+import it.parrocchia.coro.domain.model.AudioOutputRoute
 import it.parrocchia.coro.domain.model.TrackSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -21,7 +24,9 @@ data class AppSettings(
     val customSoundFontLocalPath: String? = null,
     val holdDurationMs: Int = DEFAULT_HOLD_DURATION_MS,
     val defaultFadeOutMs: Int = TrackSettings.DEFAULT_FADE_OUT_MS,
-    val keepScreenOnInLive: Boolean = true
+    val keepScreenOnInLive: Boolean = true,
+    val audioOutputRoute: AudioOutputRoute = AudioOutputRoute.AUTO,
+    val rodeAutomationConfig: RodeAutomationConfig = RodeAutomationConfig()
 ) {
     companion object {
         const val MIN_HOLD_DURATION_MS = 300
@@ -42,6 +47,8 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
         val HOLD_DURATION_MS = intPreferencesKey("hold_duration_ms")
         val DEFAULT_FADE_OUT_MS = intPreferencesKey("default_fade_out_ms")
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on_live")
+        val AUDIO_OUTPUT_ROUTE = stringPreferencesKey("audio_output_route")
+        val RODE_AUTOMATION_JSON = stringPreferencesKey("rode_automation_json")
     }
 
     val settings: Flow<AppSettings> = dataStore.data.map { prefs ->
@@ -54,7 +61,9 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
                 .coerceIn(AppSettings.MIN_HOLD_DURATION_MS, AppSettings.MAX_HOLD_DURATION_MS),
             defaultFadeOutMs = (prefs[Keys.DEFAULT_FADE_OUT_MS] ?: TrackSettings.DEFAULT_FADE_OUT_MS)
                 .coerceIn(TrackSettings.MIN_FADE_OUT_MS, TrackSettings.MAX_FADE_OUT_MS),
-            keepScreenOnInLive = prefs[Keys.KEEP_SCREEN_ON] ?: true
+            keepScreenOnInLive = prefs[Keys.KEEP_SCREEN_ON] ?: true,
+            audioOutputRoute = AudioOutputRoute.fromStoredName(prefs[Keys.AUDIO_OUTPUT_ROUTE]),
+            rodeAutomationConfig = RodeAutomationConfigCodec.decode(prefs[Keys.RODE_AUTOMATION_JSON])
         )
     }
 
@@ -94,5 +103,13 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setKeepScreenOnInLive(enabled: Boolean) {
         dataStore.edit { it[Keys.KEEP_SCREEN_ON] = enabled }
+    }
+
+    suspend fun setAudioOutputRoute(route: AudioOutputRoute) {
+        dataStore.edit { it[Keys.AUDIO_OUTPUT_ROUTE] = route.name }
+    }
+
+    suspend fun setRodeAutomationConfig(config: RodeAutomationConfig) {
+        dataStore.edit { it[Keys.RODE_AUTOMATION_JSON] = RodeAutomationConfigCodec.encode(config) }
     }
 }

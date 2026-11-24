@@ -51,10 +51,12 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -101,6 +103,7 @@ import it.parrocchia.coro.audio.PlaybackStatus
 import it.parrocchia.coro.data.db.MassPlanWithPhases
 import it.parrocchia.coro.data.db.PlannedTrackWithSong
 import it.parrocchia.coro.data.prefs.AppSettings
+import it.parrocchia.coro.domain.mixer.RodeMixerPresetCodec
 import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.components.HoldToConfirmSurface
 import it.parrocchia.coro.ui.theme.CoroColors
@@ -127,7 +130,9 @@ fun LiveExecutionScreen(
     onStopImmediate: () -> Unit,
     onResetPlayedFlags: (planId: Long) -> Unit,
     onDismissError: () -> Unit,
-    onExitLiveMode: () -> Unit
+    onExitLiveMode: () -> Unit,
+    onOpenMixer: () -> Unit = {},
+    isMixerConnected: Boolean = false
 ) {
     val context = LocalContext.current
     var exitHintVisible by rememberSaveable { mutableStateOf(false) }
@@ -281,6 +286,8 @@ fun LiveExecutionScreen(
                 isLiveBusy = isLiveBusy,
                 showExitHint = exitHintVisible,
                 hasPlayedAny = hasPlayedAny,
+                isMixerConnected = isMixerConnected,
+                onOpenMixer = onOpenMixer,
                 onResetPlayed = { massPlan?.plan?.id?.let(onResetPlayedFlags) },
                 onExitLiveMode = onExitLiveMode
             )
@@ -340,7 +347,43 @@ fun LiveExecutionScreen(
                 }
             }
 
-            val contentTopPadding = if (errorMsg != null) 0.dp else innerPadding.calculateTopPadding()
+            val showAutomationOffBanner = isMixerConnected && !settings.rodeAutomationConfig.enabled
+            if (showAutomationOffBanner) {
+                Surface(
+                    color = CoroColors.FadeAmber,
+                    onClick = onOpenMixer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = if (errorMsg != null) 0.dp else innerPadding.calculateTopPadding())
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = innerPadding.calculateStartPadding(layoutDirection) + 16.dp,
+                                end = innerPadding.calculateEndPadding(layoutDirection) + 16.dp,
+                                top = 8.dp,
+                                bottom = 8.dp
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Automazione Muto mixer disattivata — tocca per attivarla",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            val contentTopPadding = if (errorMsg != null || showAutomationOffBanner) {
+                0.dp
+            } else {
+                innerPadding.calculateTopPadding()
+            }
 
             if (isWideLayout) {
                 val edgePad = if (isCompactHeight) 10.dp else 16.dp
@@ -422,6 +465,8 @@ private fun LiveTopHeader(
     isLiveBusy: Boolean,
     showExitHint: Boolean,
     hasPlayedAny: Boolean,
+    isMixerConnected: Boolean,
+    onOpenMixer: () -> Unit,
     onResetPlayed: () -> Unit,
     onExitLiveMode: () -> Unit
 ) {
@@ -496,6 +541,14 @@ private fun LiveTopHeader(
                             Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(18.dp))
                         }
                     }
+                }
+
+                IconButton(onClick = onOpenMixer) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = "Mixer RØDECaster Pro II",
+                        tint = if (isMixerConnected) CoroColors.PlayedAccent else CoroColors.TextSecondary
+                    )
                 }
 
                 HoldToConfirmSurface(
@@ -676,10 +729,14 @@ private fun LiveTrackList(
                             track.transposeSemitones,
                             track.startOffsetMs,
                             track.fadeOutMs,
-                            track.volume
+                            track.volume,
+                            track.mixerConfigJson
                         ) {
                             buildList {
                                 add(song.audioFormat.shortLabel)
+                                RodeMixerPresetCodec.decode(track.mixerConfigJson)?.badgeLabel()?.let {
+                                    add(it)
+                                }
                                 if (track.transposeSemitones != 0) {
                                     add(TrackSettings.formatTranspose(track.transposeSemitones))
                                 }
