@@ -5,10 +5,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -17,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -44,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import it.parrocchia.coro.audio.PlaybackController
@@ -53,7 +56,11 @@ import it.parrocchia.coro.domain.model.AudioFormat
 import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.theme.CoroColors
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.math.abs
 import kotlin.math.roundToInt
+
+private val SheetCompactButtonPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+private val StepButtonPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -111,7 +118,9 @@ fun TrackSettingsSheet(
                 Text(
                     text = song.title,
                     style = MaterialTheme.typography.headlineSmall,
-                    color = CoroColors.Gold
+                    color = CoroColors.Gold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = "${song.audioFormat.shortLabel} · Durata ${TrackSettings.formatTimeMs(song.durationMs)}",
@@ -134,98 +143,82 @@ fun TrackSettingsSheet(
             )
 
             // 1. Punto di attacco
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SheetSectionHeader(
+                    title = "Punto di attacco",
+                    valueText = TrackSettings.formatTimeMs(startOffsetMs)
+                )
+                val maxStart = (effectiveDurationMs - 1000L).coerceAtLeast(0L)
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Punto di attacco", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = TrackSettings.formatTimeMs(startOffsetMs),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = CoroColors.Gold
+                    StepOutlinedButton(
+                        label = "-5 s",
+                        onClick = { startOffsetMs = (startOffsetMs - 5000L).coerceAtLeast(0L) }
                     )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val maxStart = (effectiveDurationMs - 1000L).coerceAtLeast(0L)
-                    OutlinedButton(
-                        onClick = { startOffsetMs = (startOffsetMs - 5000L).coerceAtLeast(0L) },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("-5s") }
-                    OutlinedButton(
-                        onClick = { startOffsetMs = (startOffsetMs - 1000L).coerceAtLeast(0L) },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("-1s") }
-                    OutlinedButton(
-                        onClick = { startOffsetMs = 0L },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("0:00") }
-                    OutlinedButton(
-                        onClick = { startOffsetMs = (startOffsetMs + 1000L).coerceAtMost(maxStart) },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("+1s") }
-                    OutlinedButton(
-                        onClick = { startOffsetMs = (startOffsetMs + 5000L).coerceAtMost(maxStart) },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("+5s") }
+                    StepOutlinedButton(
+                        label = "-1 s",
+                        onClick = { startOffsetMs = (startOffsetMs - 1000L).coerceAtLeast(0L) }
+                    )
+                    StepOutlinedButton(
+                        label = "+1 s",
+                        onClick = { startOffsetMs = (startOffsetMs + 1000L).coerceAtMost(maxStart) }
+                    )
+                    StepOutlinedButton(
+                        label = "+5 s",
+                        onClick = { startOffsetMs = (startOffsetMs + 5000L).coerceAtMost(maxStart) }
+                    )
+                    StepOutlinedButton(
+                        label = "Inizio (0:00)",
+                        enabled = startOffsetMs > 0L,
+                        onClick = { startOffsetMs = 0L }
+                    )
                 }
             }
 
             HorizontalDivider(color = CoroColors.Border)
 
             // 2. Cambio tonalità (semitoni)
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SheetSectionHeader(
+                    title = "Cambio tonalità",
+                    subtitle = if (song.audioFormat == AudioFormat.MIDI)
+                        "Preserva automaticamente il canale 10 (percussioni)"
+                    else
+                        "Varia la tonalità mantenendo la velocità originale",
+                    valueText = TrackSettings.formatTranspose(transpose)
+                )
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column {
-                        Text("Cambio tonalità", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = if (song.audioFormat == AudioFormat.MIDI)
-                                "Preserva automaticamente il canale 10 (percussioni)"
-                            else
-                                "Varia la tonalità mantenendo la velocità originale",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = CoroColors.TextSecondary
-                        )
-                    }
-                    Text(
-                        text = TrackSettings.formatTranspose(transpose),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = CoroColors.Gold
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    OutlinedButton(
+                    StepOutlinedButton(
+                        label = "-1 semitono",
+                        enabled = transpose > TrackSettings.MIN_TRANSPOSE,
                         onClick = {
                             transpose = (transpose - 1).coerceAtLeast(TrackSettings.MIN_TRANSPOSE)
                             playbackController.updatePreviewTranspose(transpose)
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("-1 semitono") }
-                    OutlinedButton(
-                        onClick = {
-                            transpose = 0
-                            playbackController.updatePreviewTranspose(0)
-                        },
-                        modifier = Modifier.weight(0.8f)
-                    ) { Text("Orig.") }
-                    OutlinedButton(
+                        }
+                    )
+                    StepOutlinedButton(
+                        label = "+1 semitono",
+                        enabled = transpose < TrackSettings.MAX_TRANSPOSE,
                         onClick = {
                             transpose = (transpose + 1).coerceAtMost(TrackSettings.MAX_TRANSPOSE)
                             playbackController.updatePreviewTranspose(transpose)
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("+1 semitono") }
+                        }
+                    )
+                    StepOutlinedButton(
+                        label = "Originale",
+                        enabled = transpose != 0,
+                        onClick = {
+                            transpose = 0
+                            playbackController.updatePreviewTranspose(0)
+                        }
+                    )
                 }
             }
 
@@ -233,24 +226,25 @@ fun TrackSettingsSheet(
 
             // 3. Durata sfumatura
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                SheetSectionHeader(
+                    title = "Durata sfumatura (Fade-out)",
+                    valueText = TrackSettings.formatFadeSec(fadeOutMs)
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text("Durata sfumatura (Fade-out)", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = TrackSettings.formatFadeSec(fadeOutMs),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = CoroColors.Gold
-                    )
-                }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(1000, 2000, 3000, 5000, 8000, 10000).forEach { preset ->
                         FilterChip(
                             selected = fadeOutMs == preset,
                             onClick = { fadeOutMs = preset },
-                            label = { Text(TrackSettings.formatFadeSec(preset)) }
+                            label = {
+                                Text(
+                                    text = TrackSettings.formatFadeSec(preset),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         )
                     }
                 }
@@ -269,26 +263,12 @@ fun TrackSettingsSheet(
             HorizontalDivider(color = CoroColors.Border)
 
             // 4. Volume relativo brano
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Volume relativo brano", style = MaterialTheme.typography.titleMedium)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = TrackSettings.formatVolumePercent(volume),
-                            style = MaterialTheme.typography.titleLarge,
-                            color = CoroColors.Gold
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        OutlinedButton(onClick = {
-                            volume = 1.0f
-                            playbackController.updatePreviewVolume(1.0f)
-                        }) { Text("100%") }
-                    }
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SheetSectionHeader(
+                    title = "Volume relativo brano",
+                    subtitle = "Bilancia questo brano rispetto agli altri (100% = normale)",
+                    valueText = TrackSettings.formatVolumePercent(volume)
+                )
                 Slider(
                     value = volume,
                     onValueChange = { newVol ->
@@ -301,6 +281,23 @@ fun TrackSettingsSheet(
                     },
                     valueRange = TrackSettings.MIN_VOLUME..TrackSettings.MAX_VOLUME
                 )
+                OutlinedButton(
+                    onClick = {
+                        volume = 1.0f
+                        playbackController.updatePreviewVolume(1.0f)
+                    },
+                    enabled = abs(volume - 1.0f) > 0.005f,
+                    contentPadding = StepButtonPadding,
+                    modifier = Modifier.heightIn(min = 42.dp)
+                ) {
+                    Icon(Icons.Default.RestartAlt, contentDescription = null)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Ripristina volume a 100%",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             if (showSaveAsDefaultToggle) {
@@ -312,7 +309,11 @@ fun TrackSettingsSheet(
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 10.dp)
+                    ) {
                         Text(
                             text = "Salva come default di questo brano",
                             style = MaterialTheme.typography.bodyLarge,
@@ -334,18 +335,23 @@ fun TrackSettingsSheet(
             // Bottoni azione
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedButton(
                     onClick = {
                         playbackController.stopPreviewIfActive()
                         onDismiss()
                     },
+                    contentPadding = SheetCompactButtonPadding,
                     modifier = Modifier
                         .weight(1f)
-                        .height(54.dp)
+                        .heightIn(min = 52.dp)
                 ) {
-                    Text("Annulla")
+                    Text(
+                        text = "Annulla",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
                 Button(
                     onClick = {
@@ -360,14 +366,74 @@ fun TrackSettingsSheet(
                             saveAsDefault
                         )
                     },
+                    contentPadding = SheetCompactButtonPadding,
                     modifier = Modifier
-                        .weight(1.4f)
-                        .height(54.dp)
+                        .weight(1.3f)
+                        .heightIn(min = 52.dp)
                 ) {
-                    Text("Salva impostazioni", fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "Salva",
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SheetSectionHeader(
+    title: String,
+    valueText: String,
+    subtitle: String? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = CoroColors.TextSecondary
+                )
+            }
+        }
+        Text(
+            text = valueText,
+            style = MaterialTheme.typography.titleLarge,
+            color = CoroColors.Gold,
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+}
+
+@Composable
+private fun StepOutlinedButton(
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        contentPadding = StepButtonPadding,
+        modifier = Modifier.heightIn(min = 44.dp)
+    ) {
+        Text(
+            text = label,
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
@@ -404,12 +470,13 @@ private fun TrackPreviewBox(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
                 text = "Anteprima ascolto",
                 style = MaterialTheme.typography.titleMedium,
-                color = CoroColors.TextPrimary
+                color = CoroColors.TextPrimary,
+                modifier = Modifier.weight(1f)
             )
             Button(
                 onClick = {
@@ -427,16 +494,22 @@ private fun TrackPreviewBox(
                         )
                     }
                 },
+                contentPadding = SheetCompactButtonPadding,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isPreviewPlayingThisSong) CoroColors.StopRed else CoroColors.PlayGreen
-                )
+                ),
+                modifier = Modifier.heightIn(min = 44.dp)
             ) {
                 Icon(
                     imageVector = if (isPreviewPlayingThisSong) Icons.Default.Stop else Icons.Default.PlayArrow,
                     contentDescription = null
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(if (isPreviewPlayingThisSong) "Ferma" else "Ascolta")
+                Text(
+                    text = if (isPreviewPlayingThisSong) "Ferma" else "Ascolta",
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
         }
 
@@ -460,20 +533,37 @@ private fun TrackPreviewBox(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "${TrackSettings.formatTimeMs(currentPos)} / ${TrackSettings.formatTimeMs(effectiveDurationMs)}",
+                text = TrackSettings.formatTimeMs(currentPos),
                 style = MaterialTheme.typography.bodyMedium,
-                color = CoroColors.TextSecondary
+                color = CoroColors.Gold,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
             )
-            OutlinedButton(
-                onClick = {
-                    onStartOffsetChange(currentPos.coerceIn(0L, (effectiveDurationMs - 1000L).coerceAtLeast(0L)))
-                },
-                enabled = isPreviewPlayingThisSong
-            ) {
-                Icon(Icons.Default.Flag, contentDescription = null)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Imposta attacco qui")
-            }
+            Text(
+                text = TrackSettings.formatTimeMs(effectiveDurationMs),
+                style = MaterialTheme.typography.bodyMedium,
+                color = CoroColors.TextSecondary,
+                maxLines = 1
+            )
+        }
+
+        OutlinedButton(
+            onClick = {
+                onStartOffsetChange(currentPos.coerceIn(0L, (effectiveDurationMs - 1000L).coerceAtLeast(0L)))
+            },
+            enabled = isPreviewPlayingThisSong,
+            contentPadding = SheetCompactButtonPadding,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 46.dp)
+        ) {
+            Icon(Icons.Default.Flag, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Imposta punto di attacco qui",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
