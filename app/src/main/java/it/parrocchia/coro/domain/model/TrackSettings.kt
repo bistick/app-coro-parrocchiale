@@ -7,7 +7,8 @@ data class TrackSettings(
     val fadeOutMs: Int = DEFAULT_FADE_OUT_MS,
     val startOffsetMs: Long = 0L,
     val transposeSemitones: Int = 0,
-    val volume: Float = DEFAULT_VOLUME
+    val volume: Float = DEFAULT_VOLUME,
+    val mixerConfigJson: String? = null
 ) {
     fun normalized(maxDurationMs: Long = Long.MAX_VALUE): TrackSettings {
         val clampedFade = fadeOutMs.coerceIn(MIN_FADE_OUT_MS, MAX_FADE_OUT_MS)
@@ -19,7 +20,8 @@ data class TrackSettings(
             fadeOutMs = clampedFade,
             startOffsetMs = clampedStart,
             transposeSemitones = clampedTranspose,
-            volume = clampedVolume
+            volume = clampedVolume,
+            mixerConfigJson = mixerConfigJson?.takeIf { it.isNotBlank() }
         )
     }
 

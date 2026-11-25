@@ -51,6 +51,9 @@ interface CoroDao {
         volume: Float
     )
 
+    @Query("UPDATE songs SET defaultMixerConfigJson = :mixerConfigJson WHERE id = :songId")
+    suspend fun updateSongDefaultMixerConfig(songId: Long, mixerConfigJson: String?)
+
     @Query("DELETE FROM songs WHERE isDemo = 0 AND uri NOT IN (:activeUris)")
     suspend fun deleteMissingNonDemoSongs(activeUris: List<String>)
 
@@ -145,6 +148,9 @@ interface CoroDao {
         volume: Float
     )
 
+    @Query("UPDATE planned_tracks SET mixerConfigJson = :mixerConfigJson WHERE id = :trackId")
+    suspend fun updatePlannedTrackMixerConfig(trackId: Long, mixerConfigJson: String?)
+
     @Query("UPDATE planned_tracks SET sortOrder = :sortOrder WHERE id = :trackId")
     suspend fun updatePlannedTrackSortOrder(trackId: Long, sortOrder: Int)
 
@@ -179,7 +185,8 @@ interface CoroDao {
         startOffsetMs: Long,
         transposeSemitones: Int,
         volume: Float,
-        saveAsSongDefault: Boolean
+        saveAsSongDefault: Boolean,
+        mixerConfigJson: String? = null
     ) {
         updatePlannedTrackSettings(
             trackId = trackId,
@@ -188,6 +195,7 @@ interface CoroDao {
             transposeSemitones = transposeSemitones,
             volume = volume
         )
+        updatePlannedTrackMixerConfig(trackId = trackId, mixerConfigJson = mixerConfigJson)
         if (saveAsSongDefault) {
             updateSongDefaults(
                 songId = songId,
@@ -196,6 +204,59 @@ interface CoroDao {
                 transposeSemitones = transposeSemitones,
                 volume = volume
             )
+            updateSongDefaultMixerConfig(songId = songId, mixerConfigJson = mixerConfigJson)
         }
+    }
+
+    @Query(
+        """
+        UPDATE planned_tracks
+        SET fadeOutMs = :fadeOutMs,
+            startOffsetMs = :startOffsetMs,
+            transposeSemitones = :transposeSemitones,
+            volume = :volume,
+            mixerConfigJson = :mixerConfigJson
+        WHERE songId = :songId
+          AND phaseId IN (
+              SELECT mp.id FROM mass_phases mp
+              INNER JOIN mass_plans p ON p.id = mp.massPlanId
+              WHERE p.isActive = 1 AND p.isTemplate = 0
+          )
+        """
+    )
+    suspend fun syncPlannedTracksInActiveMassForSong(
+        songId: Long,
+        fadeOutMs: Int,
+        startOffsetMs: Long,
+        transposeSemitones: Int,
+        volume: Float,
+        mixerConfigJson: String?
+    ): Int
+
+    @Transaction
+    suspend fun saveSongDefaultsAndSyncActiveMass(
+        songId: Long,
+        fadeOutMs: Int,
+        startOffsetMs: Long,
+        transposeSemitones: Int,
+        volume: Float,
+        mixerConfigJson: String?
+    ) {
+        updateSongDefaults(
+            songId = songId,
+            fadeOutMs = fadeOutMs,
+            startOffsetMs = startOffsetMs,
+            transposeSemitones = transposeSemitones,
+            volume = volume
+        )
+        updateSongDefaultMixerConfig(songId = songId, mixerConfigJson = mixerConfigJson)
+        syncPlannedTracksInActiveMassForSong(
+            songId = songId,
+            fadeOutMs = fadeOutMs,
+            startOffsetMs = startOffsetMs,
+            transposeSemitones = transposeSemitones,
+            volume = volume,
+            mixerConfigJson = mixerConfigJson
+        )
     }
 }

@@ -13,6 +13,7 @@ enum class PlaybackStatus {
 data class PlaybackState(
     val status: PlaybackStatus = PlaybackStatus.IDLE,
     val activeTrackId: Long? = null,
+    val lastLiveTrackId: Long? = null,
     val songId: Long? = null,
     val title: String = "",
     val phaseLabel: String = "",

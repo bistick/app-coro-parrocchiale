@@ -5,25 +5,36 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import it.parrocchia.coro.AppContainer
+import it.parrocchia.coro.audio.AudioOutputRouter
 import it.parrocchia.coro.audio.PlaybackController
 import it.parrocchia.coro.audio.PlaybackState
 import it.parrocchia.coro.data.db.MassPlanWithPhases
 import it.parrocchia.coro.data.db.PlannedTrackWithSong
 import it.parrocchia.coro.data.db.SongEntity
+import it.parrocchia.coro.data.mixer.rode.RodeMixerController
 import it.parrocchia.coro.data.prefs.AppSettings
 import it.parrocchia.coro.data.repository.CoroRepository
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
+import it.parrocchia.coro.domain.mixer.RodeMixerState
+import it.parrocchia.coro.domain.model.AppThemeMode
+import it.parrocchia.coro.domain.model.AudioOutputRoute
+import it.parrocchia.coro.domain.model.AudioOutputStatus
 import it.parrocchia.coro.domain.model.MassPreset
 import it.parrocchia.coro.domain.model.TrackSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class CoroViewModel(
     private val repository: CoroRepository,
-    val playbackController: PlaybackController
+    val playbackController: PlaybackController,
+    private val rodeMixerController: RodeMixerController? = null,
+    private val audioOutputRouter: AudioOutputRouter? = playbackController.audioOutputRouter
 ) : ViewModel() {
 
     val activeMassPlan: StateFlow<MassPlanWithPhases?> = repository.activeMassPlan
@@ -40,15 +51,74 @@ class CoroViewModel(
 
     val playbackState: StateFlow<PlaybackState> = playbackController.state
 
+    private val fallbackMixerState = MutableStateFlow(RodeMixerState())
+    val rodeMixerState: StateFlow<RodeMixerState> = rodeMixerController?.state ?: fallbackMixerState.asStateFlow()
+
+    private val fallbackAudioOutputStatus = MutableStateFlow(AudioOutputStatus())
+    val audioOutputStatus: StateFlow<AudioOutputStatus> =
+        audioOutputRouter?.status ?: fallbackAudioOutputStatus.asStateFlow()
+
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
     private val _toastMessage = MutableStateFlow<String?>(null)
     val toastMessage: StateFlow<String?> = _toastMessage.asStateFlow()
 
+    private var autoSelectedMusicChannelInSession = false
+
     init {
         viewModelScope.launch {
             repository.ensureInitialized()
+        }
+        viewModelScope.launch {
+            repository.appSettings.collectLatest { appSettings ->
+                audioOutputRouter?.setPreferredRoute(appSettings.audioOutputRoute)
+                if (audioOutputRouter == null) {
+                    fallbackAudioOutputStatus.value = fallbackAudioOutputStatus.value.copy(
+                        selectedRoute = appSettings.audioOutputRoute
+                    )
+                }
+                val skipStalePreAutoSave = autoSelectedMusicChannelInSession &&
+                    !appSettings.hasConfiguredRodeMusicChannel &&
+                    appSettings.rodeAutomationConfig.musicFaderIndices.isEmpty()
+                if (!skipStalePreAutoSave) {
+                    rodeMixerController?.setAutomationConfig(appSettings.rodeAutomationConfig)
+                    if (rodeMixerController == null) {
+                        fallbackMixerState.value = fallbackMixerState.value.copy(
+                            automationConfig = appSettings.rodeAutomationConfig
+                        )
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            combine(repository.appSettings, rodeMixerState) { appSettings, mixerState ->
+                appSettings to mixerState
+            }.collectLatest { (appSettings, mixerState) ->
+                if (!autoSelectedMusicChannelInSession &&
+                    !appSettings.hasConfiguredRodeMusicChannel &&
+                    appSettings.rodeAutomationConfig.musicFaderIndices.isEmpty() &&
+                    mixerState.isConnected &&
+                    mixerState.assignedFaders.isNotEmpty()
+                ) {
+                    val detected = RodeAutomationConfig.detectDefaultMusicFader(
+                        assignedFaders = mixerState.assignedFaders,
+                        preferBluetooth = appSettings.audioOutputRoute == AudioOutputRoute.BLUETOOTH
+                    )
+                    if (detected != null) {
+                        autoSelectedMusicChannelInSession = true
+                        val updatedConfig = appSettings.rodeAutomationConfig.copy(
+                            enabled = true,
+                            musicFaderIndices = setOf(detected.faderIndex)
+                        )
+                        rodeMixerController?.setAutomationConfig(updatedConfig)
+                        repository.setRodeAutomationConfig(updatedConfig, markChannelsConfigured = true)
+                        postToast(
+                            "Canale musica configurato: F${detected.displayNumber} · ${detected.assignedLabel}"
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -70,6 +140,7 @@ class CoroViewModel(
     fun resetMass(keepEnabledPhases: Boolean) {
         viewModelScope.launch {
             playbackController.stopPreviewIfActive()
+            playbackController.resetLastLiveTrack()
             repository.resetMassForNewDay(keepEnabledPhases)
             postToast("Scaletta azzerata per la nuova messa")
         }
@@ -78,6 +149,9 @@ class CoroViewModel(
     fun applyLiturgicalPreset(preset: MassPreset, clearTracks: Boolean) {
         viewModelScope.launch {
             playbackController.stopPreviewIfActive()
+            if (clearTracks) {
+                playbackController.resetLastLiveTrack()
+            }
             repository.applyLiturgicalPreset(preset, clearTracks)
             postToast("Preset applicato: ${preset.name}")
         }
@@ -100,6 +174,7 @@ class CoroViewModel(
     fun applySavedTemplate(templateId: Long, templateTitle: String) {
         viewModelScope.launch {
             playbackController.stopPreviewIfActive()
+            playbackController.resetLastLiveTrack()
             repository.applySavedTemplate(templateId)
             postToast("Preset caricato: $templateTitle")
         }
@@ -178,7 +253,7 @@ class CoroViewModel(
         viewModelScope.launch {
             playbackController.stopPreviewIfActive()
             repository.updateSongDefaultsDirect(songId, settings, maxDurationMs)
-            postToast("Preferenze predefinite del brano salvate")
+            postToast("Preferenze predefinite salvate e sincronizzate con la messa")
         }
     }
 
@@ -251,6 +326,22 @@ class CoroViewModel(
         viewModelScope.launch { repository.setKeepScreenOnInLive(enabled) }
     }
 
+    fun setThemeMode(mode: AppThemeMode) {
+        viewModelScope.launch { repository.setThemeMode(mode) }
+    }
+
+    fun setAudioOutputRoute(route: AudioOutputRoute) {
+        audioOutputRouter?.setPreferredRoute(route)
+        viewModelScope.launch {
+            repository.setAudioOutputRoute(route)
+            postToast("Uscita audio: ${route.displayLabel}")
+        }
+    }
+
+    fun refreshAudioOutputDevices() {
+        audioOutputRouter?.refreshDevices()
+    }
+
     // --- Esecuzione Live ---
     fun playLiveTrack(phaseLabel: String, item: PlannedTrackWithSong) {
         playbackController.playLiveTrack(phaseLabel, item)
@@ -266,6 +357,7 @@ class CoroViewModel(
 
     fun resetSessionPlayed(planId: Long) {
         viewModelScope.launch {
+            playbackController.resetLastLiveTrack()
             repository.resetSessionProgress(planId)
             postToast("Stato brani eseguiti azzerato")
         }
@@ -275,12 +367,82 @@ class CoroViewModel(
         playbackController.clearError()
     }
 
+    // --- Mixer RØDECaster Pro II ---
+    fun connectRodeMixer() {
+        val controller = rodeMixerController ?: return
+        viewModelScope.launch {
+            controller.connect()
+        }
+    }
+
+    fun refreshRodeMixer() {
+        val controller = rodeMixerController ?: return
+        viewModelScope.launch {
+            controller.refresh()
+        }
+    }
+
+    fun disconnectRodeMixer() {
+        rodeMixerController?.disconnect()
+    }
+
+    fun setRodeChannelMute(faderIndex: Int, muted: Boolean) {
+        val controller = rodeMixerController ?: return
+        viewModelScope.launch {
+            controller.setChannelMute(faderIndex, muted)
+        }
+    }
+
+    fun setRodeMonitorMute(muted: Boolean) {
+        val controller = rodeMixerController ?: return
+        viewModelScope.launch {
+            controller.setMonitorMute(muted)
+        }
+    }
+
+    fun setRodeMonitorAutoMute(enabled: Boolean) {
+        val controller = rodeMixerController ?: return
+        viewModelScope.launch {
+            controller.setMonitorAutoMute(enabled)
+        }
+    }
+
+    fun setRodeAutomationConfig(config: RodeAutomationConfig) {
+        rodeMixerController?.setAutomationConfig(config)
+        if (rodeMixerController == null) {
+            fallbackMixerState.value = fallbackMixerState.value.copy(automationConfig = config)
+        }
+        val markConfigured = rodeMixerState.value.isConnected ||
+            config.musicFaderIndices.isNotEmpty() ||
+            config.alwaysMuteOnStopFaderIndices.isNotEmpty()
+        viewModelScope.launch {
+            repository.setRodeAutomationConfig(config, markChannelsConfigured = markConfigured)
+        }
+    }
+
+    fun muteAllRodeFaders() {
+        val controller = rodeMixerController ?: return
+        viewModelScope.launch {
+            controller.muteAllAssignedFaders().onSuccess { count ->
+                if (count > 0) {
+                    postToast("Tutti i $count canali messi in Muto")
+                }
+            }
+        }
+    }
+
+    fun dismissRodeMixerError() {
+        rodeMixerController?.clearError()
+    }
+
     class Factory(private val container: AppContainer) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return CoroViewModel(
                 repository = container.repository,
-                playbackController = container.playbackController
+                playbackController = container.playbackController,
+                rodeMixerController = container.rodeMixerController,
+                audioOutputRouter = container.audioOutputRouter
             ) as T
         }
     }

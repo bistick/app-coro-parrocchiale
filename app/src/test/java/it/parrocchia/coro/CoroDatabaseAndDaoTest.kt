@@ -205,7 +205,8 @@ class CoroDatabaseAndDaoTest {
         dao.updatePlannedTrackSortOrder(trackId1, 1)
         assertEquals(listOf(trackId2, trackId1), dao.getTracksInPhase(stdPhaseId).map { it.id })
 
-        // Atomic save with saveAsSongDefault = true
+        // Atomic save with saveAsSongDefault = true (including mixerConfigJson)
+        val soloistJson = """{"unmuteFaderIndices":[0]}"""
         dao.saveTrackSettingsAtomic(
             trackId = trackId1,
             songId = songId,
@@ -213,12 +214,17 @@ class CoroDatabaseAndDaoTest {
             startOffsetMs = 3000L,
             transposeSemitones = 3,
             volume = 1.25f,
-            saveAsSongDefault = true
+            saveAsSongDefault = true,
+            mixerConfigJson = soloistJson
         )
         assertEquals(6000, dao.getPlannedTrackById(trackId1)?.fadeOutMs)
+        assertEquals(soloistJson, dao.getPlannedTrackById(trackId1)?.mixerConfigJson)
         assertEquals(6000, dao.getSongById(songId)?.defaultFadeOutMs)
+        assertEquals(soloistJson, dao.getSongById(songId)?.defaultMixerConfigJson)
+        assertEquals(soloistJson, dao.getSongById(songId)?.defaultSettings?.mixerConfigJson)
 
         // Atomic save with saveAsSongDefault = false
+        val extraMicJson = """{"unmuteFaderIndices":[0,1]}"""
         dao.saveTrackSettingsAtomic(
             trackId = trackId1,
             songId = songId,
@@ -226,10 +232,13 @@ class CoroDatabaseAndDaoTest {
             startOffsetMs = 1000L,
             transposeSemitones = -1,
             volume = 0.8f,
-            saveAsSongDefault = false
+            saveAsSongDefault = false,
+            mixerConfigJson = extraMicJson
         )
         assertEquals(2000, dao.getPlannedTrackById(trackId1)?.fadeOutMs)
+        assertEquals(extraMicJson, dao.getPlannedTrackById(trackId1)?.mixerConfigJson)
         assertEquals(6000, dao.getSongById(songId)?.defaultFadeOutMs)
+        assertEquals(soloistJson, dao.getSongById(songId)?.defaultMixerConfigJson)
 
         dao.setTrackPlayedInSession(trackId1, true)
         assertTrue(dao.getPlannedTrackById(trackId1)!!.playedInSession)
@@ -250,5 +259,46 @@ class CoroDatabaseAndDaoTest {
 
         dao.deleteMassPlan(templateId)
         assertNull(dao.getMassPlanByIdOnce(templateId))
+    }
+
+    @Test
+    fun migration1To2_addsDefaultMixerConfigJsonColumn() {
+        val dbFile = ApplicationProvider.getApplicationContext<Context>().getDatabasePath("test_migration_1_2.db")
+        dbFile.delete()
+        val sqlite = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(dbFile, null)
+        sqlite.execSQL(
+            """
+            CREATE TABLE songs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                uri TEXT NOT NULL,
+                title TEXT NOT NULL,
+                fileName TEXT NOT NULL,
+                relativeFolder TEXT NOT NULL,
+                format TEXT NOT NULL,
+                durationMs INTEGER NOT NULL,
+                defaultFadeOutMs INTEGER NOT NULL,
+                defaultStartOffsetMs INTEGER NOT NULL,
+                defaultTransposeSemitones INTEGER NOT NULL,
+                defaultVolume REAL NOT NULL,
+                isDemo INTEGER NOT NULL,
+                lastModifiedMs INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        val supportDb = io.mockk.mockk<androidx.sqlite.db.SupportSQLiteDatabase>()
+        io.mockk.every { supportDb.execSQL(any()) } answers {
+            sqlite.execSQL(firstArg<String>())
+        }
+        CoroDatabase.MIGRATION_1_2.migrate(supportDb)
+
+        sqlite.rawQuery("PRAGMA table_info(songs)", null).use { cursor ->
+            val columns = mutableListOf<String>()
+            while (cursor.moveToNext()) {
+                columns.add(cursor.getString(1))
+            }
+            assertTrue("defaultMixerConfigJson" in columns)
+        }
+        sqlite.close()
+        dbFile.delete()
     }
 }

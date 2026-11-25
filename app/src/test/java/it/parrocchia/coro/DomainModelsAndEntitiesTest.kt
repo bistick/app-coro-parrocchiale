@@ -50,6 +50,20 @@ class DomainModelsAndEntitiesTest {
         assertEquals(AudioFormat.AUDIO, AudioFormat.fromCode("UNKNOWN"))
         assertEquals("MIDI", AudioFormat.MIDI.shortLabel)
         assertEquals("AUDIO", AudioFormat.AUDIO.shortLabel)
+
+        for (mode in it.parrocchia.coro.domain.model.AppThemeMode.entries) {
+            assertEquals(mode, it.parrocchia.coro.domain.model.AppThemeMode.fromStoredName(mode.name))
+            assertTrue(mode.displayLabel.isNotBlank())
+            assertTrue(mode.description.isNotBlank())
+        }
+        assertEquals(
+            it.parrocchia.coro.domain.model.AppThemeMode.DARK,
+            it.parrocchia.coro.domain.model.AppThemeMode.fromStoredName(null)
+        )
+        assertEquals(
+            it.parrocchia.coro.domain.model.AppThemeMode.DARK,
+            it.parrocchia.coro.domain.model.AppThemeMode.fromStoredName("UNKNOWN")
+        )
     }
 
     @Test

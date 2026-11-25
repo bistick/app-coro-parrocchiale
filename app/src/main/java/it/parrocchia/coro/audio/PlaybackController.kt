@@ -17,6 +17,7 @@ import it.parrocchia.coro.domain.model.TrackSettings
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +27,8 @@ import kotlinx.coroutines.launch
 
 /**
  * Controller unificato per l'esecuzione live in chiesa e per l'anteprima in programmazione.
- * Garantisce mutua esclusione in modalità live (impossibile avviare un secondo brano mentre uno suona).
+ * Garantisce mutua esclusione in modalità live (impossibile avviare un secondo brano mentre uno suona),
+ * instradamento uscita audio (Bluetooth / USB / Altoparlante) e sincronizzazione MediaSession/lock screen.
  */
 class PlaybackController(
     private val context: Context,
@@ -34,23 +36,50 @@ class PlaybackController(
     private val mixerController: MixerController,
     private val midiPlayer: MidiPlaybackEngine = MidiAudioPlayer(context),
     private val exoPlayer: AudioPlaybackEngine = ExoAudioPlayer(context),
+    val audioOutputRouter: AudioOutputRouter? = null,
     dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
     private val startForegroundService: (title: String, phaseLabel: String) -> Unit = { title, phase ->
         PlaybackForegroundService.start(context, title, phase)
     },
+    private val updateForegroundService: (
+        title: String,
+        phaseLabel: String,
+        positionMs: Long,
+        durationMs: Long,
+        isFading: Boolean
+    ) -> Unit = { title, phase, positionMs, durationMs, isFading ->
+        PlaybackForegroundService.update(context, title, phase, positionMs, durationMs, isFading)
+    },
     private val stopForegroundService: () -> Unit = {
         PlaybackForegroundService.stop(context)
-    }
+    },
+    private val clockMs: () -> Long = { System.currentTimeMillis() }
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private var audioFocusRequest: AudioFocusRequest? = null
+    private var startJob: Job? = null
     private var activeFormat: AudioFormat? = null
     private var activeMixerJson: String? = null
+    private var trackStopNotified: Boolean = false
+    private var trackPlayedMarked: Boolean = false
+    private var lastMediaNotificationUpdateMs: Long = 0L
+    private var lastNotifiedDurationMs: Long = 0L
 
     private val _state = MutableStateFlow(PlaybackState())
     val state: StateFlow<PlaybackState> = _state.asStateFlow()
+
+    init {
+        audioOutputRouter?.setOnPreferredDeviceChangedListener { preferredDevice ->
+            midiPlayer.setPreferredOutputDevice(preferredDevice)
+            exoPlayer.setPreferredOutputDevice(preferredDevice)
+        }
+        PlaybackForegroundService.registerTransportCallbacks(
+            onFadeOut = { fadeOutCurrent() },
+            onStop = { stopImmediateCurrent() }
+        )
+    }
 
     /**
      * Avvia un brano pianificato in Modalità Esecuzione.
@@ -69,6 +98,7 @@ class PlaybackController(
         _state.value = PlaybackState(
             status = PlaybackStatus.LOADING,
             activeTrackId = track.id,
+            lastLiveTrackId = current.lastLiveTrackId,
             songId = song.id,
             title = song.title,
             phaseLabel = phaseLabel,
@@ -81,10 +111,25 @@ class PlaybackController(
 
         activeFormat = format
         activeMixerJson = track.mixerConfigJson
+        trackStopNotified = false
+        trackPlayedMarked = false
+        lastMediaNotificationUpdateMs = 0L
+        lastNotifiedDurationMs = 0L
 
-        scope.launch {
+        startJob?.cancel()
+        startJob = scope.launch {
+            applyCurrentPreferredOutputDevice()
             requestAudioFocus()
             startForegroundService(song.title, phaseLabel)
+            updateForegroundService(
+                song.title,
+                phaseLabel,
+                track.startOffsetMs,
+                song.durationMs,
+                false
+            )
+            lastMediaNotificationUpdateMs = clockMs()
+            lastNotifiedDurationMs = song.durationMs
             mixerController.onTrackStart(track.id, track.mixerConfigJson)
             startEngine(
                 uri = song.uri,
@@ -101,6 +146,7 @@ class PlaybackController(
      * Avvia l'anteprima audio nell'editor impostazioni del brano (Modalità Programmazione).
      */
     fun startPreview(song: SongEntity, settings: TrackSettings) {
+        val preservedLastLiveId = _state.value.lastLiveTrackId
         stopInternal(markLivePlayed = false)
 
         val format = song.audioFormat
@@ -110,6 +156,7 @@ class PlaybackController(
         _state.value = PlaybackState(
             status = PlaybackStatus.LOADING,
             activeTrackId = null,
+            lastLiveTrackId = preservedLastLiveId,
             songId = song.id,
             title = song.title,
             phaseLabel = "Anteprima",
@@ -120,7 +167,8 @@ class PlaybackController(
             isPreview = true
         )
 
-        scope.launch {
+        startJob = scope.launch {
+            applyCurrentPreferredOutputDevice()
             requestAudioFocus()
             startEngine(
                 uri = song.uri,
@@ -165,11 +213,29 @@ class PlaybackController(
         val current = _state.value
         if (current.status != PlaybackStatus.PLAYING) return
 
-        _state.update { it.copy(status = PlaybackStatus.FADING_OUT, fadeProgress = 0f) }
-
         val trackId = current.activeTrackId
+        _state.update {
+            it.copy(
+                status = PlaybackStatus.FADING_OUT,
+                fadeProgress = 0f,
+                lastLiveTrackId = if (!it.isPreview && trackId != null) trackId else it.lastLiveTrackId
+            )
+        }
+
+        if (!current.isPreview) {
+            updateForegroundService(
+                current.title,
+                current.phaseLabel,
+                current.positionMs,
+                current.durationMs,
+                true
+            )
+            lastMediaNotificationUpdateMs = clockMs()
+        }
+
         if (!current.isPreview && trackId != null) {
             scope.launch {
+                markLiveTrackPlayedOnce(trackId)
                 mixerController.onTrackFade(trackId, current.fadeOutMs, activeMixerJson)
             }
         }
@@ -186,14 +252,17 @@ class PlaybackController(
         if (!current.isBusy) return
 
         val trackId = current.activeTrackId
+        val mixerJsonSnapshot = activeMixerJson
         if (!current.isPreview && trackId != null) {
+            _state.update { it.copy(lastLiveTrackId = trackId) }
             scope.launch {
-                mixerController.onTrackStop(trackId, activeMixerJson)
+                markLiveTrackPlayedOnce(trackId)
+                notifyMixerTrackStopOnce(trackId, mixerJsonSnapshot)
             }
         }
 
         if (current.status == PlaybackStatus.LOADING) {
-            stopInternal(markLivePlayed = false)
+            stopInternal(markLivePlayed = !current.isPreview)
             return
         }
 
@@ -210,10 +279,21 @@ class PlaybackController(
         }
     }
 
+    fun resetLastLiveTrack() {
+        _state.update { it.copy(lastLiveTrackId = null) }
+    }
+
     fun clearError() {
         if (_state.value.status == PlaybackStatus.ERROR) {
-            _state.value = PlaybackState()
+            _state.value = PlaybackState(lastLiveTrackId = _state.value.lastLiveTrackId)
         }
+    }
+
+    private fun applyCurrentPreferredOutputDevice() {
+        val router = audioOutputRouter ?: return
+        val preferred = router.resolvePreferredAudioDevice()
+        midiPlayer.setPreferredOutputDevice(preferred)
+        exoPlayer.setPreferredOutputDevice(preferred)
     }
 
     private suspend fun startEngine(
@@ -224,34 +304,61 @@ class PlaybackController(
         trackIdForCompletion: Long?
     ) {
         val commonOnProgress: (Long, Long, Boolean, Float) -> Unit = { pos, dur, fading, fadeProg ->
+            var updatedSnapshot: PlaybackState? = null
             _state.update { current ->
                 if (!current.isBusy) return@update current
-                current.copy(
+                val next = current.copy(
                     status = if (fading) PlaybackStatus.FADING_OUT else PlaybackStatus.PLAYING,
                     positionMs = pos,
                     durationMs = if (dur > 0L) dur else current.durationMs,
                     fadeProgress = fadeProg
                 )
+                updatedSnapshot = next
+                next
+            }
+            val snap = updatedSnapshot
+            if (snap != null && !snap.isPreview) {
+                val now = clockMs()
+                val durationChanged = snap.durationMs > 0L && snap.durationMs != lastNotifiedDurationMs
+                if (durationChanged || now - lastMediaNotificationUpdateMs >= MEDIA_SESSION_UPDATE_INTERVAL_MS) {
+                    lastMediaNotificationUpdateMs = now
+                    lastNotifiedDurationMs = snap.durationMs
+                    updateForegroundService(
+                        snap.title,
+                        snap.phaseLabel,
+                        snap.positionMs,
+                        snap.durationMs,
+                        fading
+                    )
+                }
             }
         }
 
         val commonOnCompleted: () -> Unit = {
+            val mixerJsonSnapshot = activeMixerJson
             scope.launch {
                 if (!isPreview && trackIdForCompletion != null) {
-                    mixerController.onTrackStop(trackIdForCompletion, activeMixerJson)
-                    repository.markTrackPlayed(trackIdForCompletion, true)
+                    notifyMixerTrackStopOnce(trackIdForCompletion, mixerJsonSnapshot)
+                    markLiveTrackPlayedOnce(trackIdForCompletion)
                 }
                 finalizeStop(markLivePlayed = false)
             }
         }
 
         val commonOnError: (String) -> Unit = { msg ->
+            val mixerJsonSnapshot = activeMixerJson
+            val preservedLastLiveId = _state.value.lastLiveTrackId
             scope.launch {
+                if (!isPreview && trackIdForCompletion != null) {
+                    notifyMixerTrackStopOnce(trackIdForCompletion, mixerJsonSnapshot)
+                }
                 stopForegroundService()
                 abandonAudioFocus()
                 activeFormat = null
+                activeMixerJson = null
                 _state.value = PlaybackState(
                     status = PlaybackStatus.ERROR,
+                    lastLiveTrackId = preservedLastLiveId,
                     errorMessage = msg,
                     isPreview = isPreview
                 )
@@ -300,7 +407,21 @@ class PlaybackController(
         }
     }
 
+    private suspend fun markLiveTrackPlayedOnce(trackId: Long) {
+        if (trackPlayedMarked) return
+        trackPlayedMarked = true
+        repository.markTrackPlayed(trackId, true)
+    }
+
+    private suspend fun notifyMixerTrackStopOnce(trackId: Long, mixerJson: String?) {
+        if (trackStopNotified) return
+        trackStopNotified = true
+        mixerController.onTrackStop(trackId, mixerJson)
+    }
+
     private fun stopInternal(markLivePlayed: Boolean) {
+        startJob?.cancel()
+        startJob = null
         midiPlayer.stopImmediateSync()
         exoPlayer.stopImmediate()
         finalizeStop(markLivePlayed)
@@ -308,16 +429,24 @@ class PlaybackController(
 
     private fun finalizeStop(markLivePlayed: Boolean) {
         val prev = _state.value
+        val updatedLastLiveId = if (!prev.isPreview && prev.activeTrackId != null) {
+            prev.activeTrackId
+        } else {
+            prev.lastLiveTrackId
+        }
         if (markLivePlayed && !prev.isPreview && prev.activeTrackId != null) {
+            val trackId = prev.activeTrackId
             scope.launch {
-                repository.markTrackPlayed(prev.activeTrackId, true)
+                markLiveTrackPlayedOnce(trackId)
             }
         }
         stopForegroundService()
         abandonAudioFocus()
         activeFormat = null
         activeMixerJson = null
-        _state.value = PlaybackState()
+        lastMediaNotificationUpdateMs = 0L
+        lastNotifiedDurationMs = 0L
+        _state.value = PlaybackState(lastLiveTrackId = updatedLastLiveId)
     }
 
     private fun requestAudioFocus() {
@@ -337,5 +466,9 @@ class PlaybackController(
     private fun abandonAudioFocus() {
         audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
         audioFocusRequest = null
+    }
+
+    companion object {
+        private const val MEDIA_SESSION_UPDATE_INTERVAL_MS = 1000L
     }
 }

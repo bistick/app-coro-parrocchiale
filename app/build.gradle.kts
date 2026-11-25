@@ -34,6 +34,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Fallback locale con firma debug per produrre un APK release installabile
+            // quando non è configurato un keystore di produzione esterno.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -123,6 +126,7 @@ val jacocoBusinessLogicIncludes = listOf(
     "it/parrocchia/coro/domain/**",
     "it/parrocchia/coro/data/**",
     "it/parrocchia/coro/ui/CoroViewModel*",
+    "it/parrocchia/coro/audio/AudioOutputRouter*",
     "it/parrocchia/coro/audio/FadeCurve*",
     "it/parrocchia/coro/audio/PlaybackState*",
     "it/parrocchia/coro/audio/PlaybackStatus*",

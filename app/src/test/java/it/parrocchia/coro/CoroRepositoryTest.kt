@@ -315,10 +315,67 @@ class CoroRepositoryTest {
         repository.setHoldDurationMs(550)
         repository.setDefaultFadeOutMs(4000)
         repository.setKeepScreenOnInLive(false)
+        repository.setThemeMode(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT)
+        val autoCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(
+            enabled = true,
+            musicFaderIndices = setOf(6),
+            alwaysMuteOnStopFaderIndices = setOf(0)
+        )
+        repository.setRodeAutomationConfig(autoCfg)
         val s = repository.appSettings.first()
         assertEquals(550, s.holdDurationMs)
         assertEquals(4000, s.defaultFadeOutMs)
         assertFalse(s.keepScreenOnInLive)
+        assertEquals(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT, s.themeMode)
+        assertEquals(autoCfg, s.rodeAutomationConfig)
+
+        // Default mixerConfigJson on song is inherited by addSongToPhase AND synced to existing active Mass tracks
+        repository.ensureInitialized()
+        val firstSong = repository.allSongs.first().first()
+        val activeBeforeEdit = repository.activeMassPlan.first()!!
+        val phaseForExisting = activeBeforeEdit.enabledPhases.first().phase.id
+        val existingTrackId = repository.addSongToPhase(phaseForExisting, firstSong)
+        val templateSnapshotId = repository.saveActivePlanAsTemplate("Snapshot Pre-Modifica")
+
+        val soloistJson = """{"unmuteFaderIndices":[0]}"""
+        repository.updateSongDefaultsDirect(
+            songId = firstSong.id,
+            settings = TrackSettings(
+                fadeOutMs = 4500,
+                startOffsetMs = 2000L,
+                transposeSemitones = 2,
+                volume = 1.15f,
+                mixerConfigJson = soloistJson
+            ),
+            maxDurationMs = 60_000L
+        )
+        val updatedSong = repository.allSongs.first().first { it.id == firstSong.id }
+        assertEquals(soloistJson, updatedSong.defaultMixerConfigJson)
+
+        // Il brano già presente nella scaletta attiva viene sincronizzato subito
+        val syncedExistingTrack = repository.activeMassPlan.first()!!
+            .enabledPhases.flatMap { it.tracks }
+            .first { it.track.id == existingTrackId }
+        assertEquals(soloistJson, syncedExistingTrack.track.mixerConfigJson)
+        assertEquals(4500, syncedExistingTrack.track.fadeOutMs)
+        assertEquals(2000L, syncedExistingTrack.track.startOffsetMs)
+        assertEquals(2, syncedExistingTrack.track.transposeSemitones)
+        assertEquals(1.15f, syncedExistingTrack.track.volume, 1e-5f)
+
+        // I template salvati restano immutati (snapshot congelato)
+        val savedTemplateTrack = repository.savedTemplates.first()
+            .first { it.plan.id == templateSnapshotId }
+            .phases.flatMap { it.tracks }
+            .first { it.song.id == firstSong.id }
+        assertNull(savedTemplateTrack.track.mixerConfigJson)
+
+        val activePlan = repository.activeMassPlan.first()!!
+        val phaseId = activePlan.enabledPhases.first().phase.id
+        val addedTrackId = repository.addSongToPhase(phaseId, updatedSong)
+        val addedTrack = repository.activeMassPlan.first()!!
+            .enabledPhases.flatMap { it.tracks }
+            .first { it.track.id == addedTrackId }
+        assertEquals(soloistJson, addedTrack.track.mixerConfigJson)
 
         // Companion helpers
         val title = CoroRepository.defaultMassTitle(LocalDate.of(2026, 12, 25), "Messa di Natale")

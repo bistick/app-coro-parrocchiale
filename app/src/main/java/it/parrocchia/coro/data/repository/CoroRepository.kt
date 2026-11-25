@@ -12,6 +12,9 @@ import it.parrocchia.coro.data.library.ScanSummary
 import it.parrocchia.coro.data.library.SoundFontManager
 import it.parrocchia.coro.data.prefs.AppSettings
 import it.parrocchia.coro.data.prefs.AppSettingsStore
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
+import it.parrocchia.coro.domain.model.AppThemeMode
+import it.parrocchia.coro.domain.model.AudioOutputRoute
 import it.parrocchia.coro.domain.model.MassPreset
 import it.parrocchia.coro.domain.model.MassPresetCatalog
 import it.parrocchia.coro.domain.model.StandardPhaseType
@@ -357,7 +360,8 @@ class CoroRepository(
                 startOffsetMs = song.defaultStartOffsetMs,
                 transposeSemitones = song.defaultTransposeSemitones,
                 volume = song.defaultVolume,
-                playedInSession = false
+                playedInSession = false,
+                mixerConfigJson = song.defaultMixerConfigJson
             )
         )
     }
@@ -395,18 +399,20 @@ class CoroRepository(
             startOffsetMs = safe.startOffsetMs,
             transposeSemitones = safe.transposeSemitones,
             volume = safe.volume,
-            saveAsSongDefault = saveAsSongDefault
+            saveAsSongDefault = saveAsSongDefault,
+            mixerConfigJson = safe.mixerConfigJson
         )
     }
 
     suspend fun updateSongDefaultsDirect(songId: Long, settings: TrackSettings, maxDurationMs: Long) {
         val safe = settings.normalized(maxDurationMs)
-        dao.updateSongDefaults(
+        dao.saveSongDefaultsAndSyncActiveMass(
             songId = songId,
             fadeOutMs = safe.fadeOutMs,
             startOffsetMs = safe.startOffsetMs,
             transposeSemitones = safe.transposeSemitones,
-            volume = safe.volume
+            volume = safe.volume,
+            mixerConfigJson = safe.mixerConfigJson
         )
     }
 
@@ -439,6 +445,12 @@ class CoroRepository(
     suspend fun setHoldDurationMs(durationMs: Int) = settingsStore.setHoldDurationMs(durationMs)
     suspend fun setDefaultFadeOutMs(fadeMs: Int) = settingsStore.setDefaultFadeOutMs(fadeMs)
     suspend fun setKeepScreenOnInLive(enabled: Boolean) = settingsStore.setKeepScreenOnInLive(enabled)
+    suspend fun setThemeMode(mode: AppThemeMode) = settingsStore.setThemeMode(mode)
+    suspend fun setAudioOutputRoute(route: AudioOutputRoute) = settingsStore.setAudioOutputRoute(route)
+    suspend fun setRodeAutomationConfig(
+        config: RodeAutomationConfig,
+        markChannelsConfigured: Boolean = true
+    ) = settingsStore.setRodeAutomationConfig(config, markChannelsConfigured)
 
     companion object {
         const val CUSTOM_TEMPLATE_PREFIX = "custom:"

@@ -6,9 +6,13 @@ import androidx.test.core.app.ApplicationProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import android.media.AudioDeviceInfo
+import it.parrocchia.coro.audio.AudioDeviceDescriptor
+import it.parrocchia.coro.audio.AudioOutputRouter
 import it.parrocchia.coro.audio.PlaybackController
 import it.parrocchia.coro.audio.PlaybackForegroundService
 import it.parrocchia.coro.audio.PlaybackStatus
+import it.parrocchia.coro.domain.model.AudioOutputRoute
 import it.parrocchia.coro.audio.media.AudioPlaybackEngine
 import it.parrocchia.coro.audio.media.ExoAudioPlayer
 import it.parrocchia.coro.audio.midi.MidiAudioPlayer
@@ -46,7 +50,9 @@ class PlaybackControllerAndServiceTest {
     private lateinit var midiEngine: FakeMidiEngine
     private lateinit var audioEngine: FakeAudioEngine
     private var serviceStartedCount = 0
+    private var serviceUpdatedCount = 0
     private var serviceStoppedCount = 0
+    private var clockMs = 1_000L
 
     @Before
     fun setUp() {
@@ -57,20 +63,26 @@ class PlaybackControllerAndServiceTest {
         midiEngine = FakeMidiEngine()
         audioEngine = FakeAudioEngine()
         serviceStartedCount = 0
+        serviceUpdatedCount = 0
         serviceStoppedCount = 0
+        clockMs = 1_000L
     }
 
     private fun createController(
-        dispatcher: kotlinx.coroutines.CoroutineDispatcher = UnconfinedTestDispatcher()
+        dispatcher: kotlinx.coroutines.CoroutineDispatcher = UnconfinedTestDispatcher(),
+        audioOutputRouter: AudioOutputRouter? = null
     ) = PlaybackController(
         context = context,
         repository = repository,
         mixerController = mixer,
         midiPlayer = midiEngine,
         exoPlayer = audioEngine,
+        audioOutputRouter = audioOutputRouter,
         dispatcher = dispatcher,
         startForegroundService = { _, _ -> serviceStartedCount++ },
-        stopForegroundService = { serviceStoppedCount++ }
+        updateForegroundService = { _, _, _, _, _ -> serviceUpdatedCount++ },
+        stopForegroundService = { serviceStoppedCount++ },
+        clockMs = { clockMs }
     )
 
     private fun midiItem(trackId: Long = 10L) = PlannedTrackWithSong(
@@ -140,11 +152,13 @@ class PlaybackControllerAndServiceTest {
         controller.seekPreview(5000L)
         assertEquals(0, midiEngine.transposeCalls)
 
-        // Fade out
+        // Fade out immediately marks track played & sets lastLiveTrackId
         controller.fadeOutCurrent()
         assertEquals(PlaybackStatus.FADING_OUT, controller.state.value.status)
+        assertEquals(10L, controller.state.value.lastLiveTrackId)
         assertEquals(3000, midiEngine.lastFadeOutMs)
         assertTrue(mixer.events.contains("fade:10:3000"))
+        coVerify(exactly = 1) { repository.markTrackPlayed(10L, true) }
 
         // Second fadeOut ignored when already FADING_OUT
         controller.fadeOutCurrent()
@@ -153,12 +167,16 @@ class PlaybackControllerAndServiceTest {
         assertEquals(0.5f, controller.state.value.fadeProgress, 1e-4f)
         assertEquals(120_000L, controller.state.value.durationMs) // dur <= 0 keeps previous duration
 
-        // Completion marks track played & resets to IDLE
+        // Completion resets to IDLE while preserving lastLiveTrackId (and without duplicating markTrackPlayed)
         midiEngine.listener!!.onCompleted()
         assertEquals(PlaybackStatus.IDLE, controller.state.value.status)
+        assertEquals(10L, controller.state.value.lastLiveTrackId)
         assertTrue(mixer.events.contains("stop:10"))
-        coVerify { repository.markTrackPlayed(10L, true) }
+        coVerify(exactly = 1) { repository.markTrackPlayed(10L, true) }
         assertTrue(serviceStoppedCount >= 1)
+
+        controller.resetLastLiveTrack()
+        assertNull(controller.state.value.lastLiveTrackId)
 
         // Progress after IDLE is safely ignored
         midiEngine.listener!!.onProgress(99_000L, 120_000L, false, 0f)
@@ -175,19 +193,23 @@ class PlaybackControllerAndServiceTest {
         audioEngine.listener!!.onProgress(20_000L, 180_000L, false, 0f)
         assertEquals(20_000L, controller.state.value.positionMs)
 
-        // Fade out & stop immediate on audio engine
-        controller.fadeOutCurrent()
-        assertEquals(4000, audioEngine.lastFadeOutMs)
-
+        // Stop immediate on live audio marks track played immediately and sets lastLiveTrackId
         controller.stopImmediateCurrent()
         assertEquals(1, audioEngine.stopWithAntiClickCalls)
+        assertEquals(20L, controller.state.value.lastLiveTrackId)
+        coVerify(exactly = 1) { repository.markTrackPlayed(20L, true) }
+        assertEquals(listOf(item.track.mixerConfigJson), mixer.stopMixerJsons)
 
-        // Error transitions to ERROR and clearError returns to IDLE
+        // Error transitions to ERROR and clearError returns to IDLE preserving lastLiveTrackId
         audioEngine.listener!!.onError("File non trovato")
         assertEquals(PlaybackStatus.ERROR, controller.state.value.status)
         assertEquals("File non trovato", controller.state.value.errorMessage)
+        assertEquals(20L, controller.state.value.lastLiveTrackId)
+        // onTrackStop was already fired on stopImmediateCurrent and must not fire twice
+        assertEquals(1, mixer.stopMixerJsons.size)
         controller.clearError()
         assertEquals(PlaybackStatus.IDLE, controller.state.value.status)
+        assertEquals(20L, controller.state.value.lastLiveTrackId)
 
         // clearError / stopImmediate / fadeOut when IDLE are safe no-ops
         controller.clearError()
@@ -196,7 +218,7 @@ class PlaybackControllerAndServiceTest {
     }
 
     @Test
-    fun stopImmediateDuringLoading_stopsSynchronouslyWithoutMarkingPlayed() = runTest {
+    fun stopImmediateDuringLoading_stopsSynchronouslyAndMarksLiveTrackPlayed() = runTest {
         val testDispatcher = StandardTestDispatcher()
         val controller = createController(dispatcher = testDispatcher)
 
@@ -204,7 +226,10 @@ class PlaybackControllerAndServiceTest {
         assertEquals(PlaybackStatus.LOADING, controller.state.value.status)
 
         controller.stopImmediateCurrent()
+        testDispatcher.scheduler.advanceUntilIdle()
         assertEquals(PlaybackStatus.IDLE, controller.state.value.status)
+        assertEquals(10L, controller.state.value.lastLiveTrackId)
+        coVerify(exactly = 1) { repository.markTrackPlayed(10L, true) }
         assertEquals(1, midiEngine.stopImmediateSyncCalls)
         assertEquals(1, audioEngine.stopImmediateCalls)
     }
@@ -284,36 +309,100 @@ class PlaybackControllerAndServiceTest {
     }
 
     @Test
-    fun playbackForegroundService_handlesStartAndStopLifecycle() {
+    fun playbackForegroundService_handlesMediaSessionLockScreenActionsAndLifecycle() {
+        var fadeCallbacks = 0
+        var stopCallbacks = 0
+        PlaybackForegroundService.registerTransportCallbacks(
+            onFadeOut = { fadeCallbacks++ },
+            onStop = { stopCallbacks++ }
+        )
+
         val serviceController = Robolectric.buildService(PlaybackForegroundService::class.java)
         val service = serviceController.create().get()
         assertNull(service.onBind(Intent()))
 
-        // Start with title & phase
+        // Start with title, phase, duration & position
         val startIntent = Intent(context, PlaybackForegroundService::class.java).apply {
-            action = "it.parrocchia.coro.action.START_PLAYBACK_SERVICE"
-            putExtra("extra_title", "Gloria")
-            putExtra("extra_phase", "Riti di Introduzione")
+            action = PlaybackForegroundService.ACTION_START
+            putExtra(PlaybackForegroundService.EXTRA_TITLE, "Gloria")
+            putExtra(PlaybackForegroundService.EXTRA_PHASE, "Riti di Introduzione")
+            putExtra(PlaybackForegroundService.EXTRA_POSITION_MS, 5_000L)
+            putExtra(PlaybackForegroundService.EXTRA_DURATION_MS, 120_000L)
+            putExtra(PlaybackForegroundService.EXTRA_IS_FADING, false)
         }
         service.onStartCommand(startIntent, 0, 1)
 
+        // Live progress update & fading update
+        val updateIntent = Intent(context, PlaybackForegroundService::class.java).apply {
+            action = PlaybackForegroundService.ACTION_UPDATE
+            putExtra(PlaybackForegroundService.EXTRA_TITLE, "Gloria")
+            putExtra(PlaybackForegroundService.EXTRA_PHASE, "Riti di Introduzione")
+            putExtra(PlaybackForegroundService.EXTRA_POSITION_MS, 30_000L)
+            putExtra(PlaybackForegroundService.EXTRA_DURATION_MS, 120_000L)
+            putExtra(PlaybackForegroundService.EXTRA_IS_FADING, true)
+        }
+        service.onStartCommand(updateIntent, 0, 2)
+
+        // Lock screen notification action buttons: Sfuma & Stop
+        service.onStartCommand(
+            Intent(context, PlaybackForegroundService::class.java).apply {
+                action = PlaybackForegroundService.ACTION_FADE_OUT
+            },
+            0,
+            3
+        )
+        service.onStartCommand(
+            Intent(context, PlaybackForegroundService::class.java).apply {
+                action = PlaybackForegroundService.ACTION_STOP_PLAYBACK
+            },
+            0,
+            4
+        )
+        assertEquals(1, fadeCallbacks)
+        assertEquals(1, stopCallbacks)
+
         // Start with blank title and no phase (fallback text)
         val blankIntent = Intent(context, PlaybackForegroundService::class.java)
-        service.onStartCommand(blankIntent, 0, 2)
+        service.onStartCommand(blankIntent, 0, 5)
 
-        // Stop action
+        // Stop action + destroy releases MediaSession cleanly
         val stopIntent = Intent(context, PlaybackForegroundService::class.java).apply {
-            action = "it.parrocchia.coro.action.STOP_PLAYBACK_SERVICE"
+            action = PlaybackForegroundService.ACTION_STOP
         }
-        service.onStartCommand(stopIntent, 0, 3)
+        service.onStartCommand(stopIntent, 0, 6)
+        serviceController.destroy()
 
         // Companion helpers execute cleanly
-        PlaybackForegroundService.start(context, "Santo", "Liturgia Eucaristica")
+        PlaybackForegroundService.start(context, "Santo", "Liturgia Eucaristica", 1000L, 90_000L, false)
+        PlaybackForegroundService.update(context, "Santo", "Liturgia Eucaristica", 5000L, 90_000L, true)
         PlaybackForegroundService.stop(context)
+        PlaybackForegroundService.registerTransportCallbacks(null, null)
+    }
+
+    @Test
+    fun audioOutputRouter_propagatesPreferredDeviceToBothEngines() = runTest {
+        val btInfo = mockk<AudioDeviceInfo>(relaxed = true)
+        val router = AudioOutputRouter(
+            audioManager = null,
+            deviceProvider = {
+                listOf(AudioDeviceDescriptor(1, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, "Mixer BT", btInfo))
+            },
+            registerSystemCallback = false
+        )
+        val controller = createController(audioOutputRouter = router)
+        router.setPreferredRoute(AudioOutputRoute.BLUETOOTH)
+        assertEquals(btInfo, midiEngine.lastPreferredDevice)
+        assertEquals(btInfo, audioEngine.lastPreferredDevice)
+
+        controller.playLiveTrack("Ingresso", midiItem())
+        clockMs += 1_500L
+        midiEngine.listener!!.onProgress(10_000L, 120_000L, false, 0f)
+        assertTrue(serviceUpdatedCount >= 2)
     }
 
     private class FakeMixerController : MixerController {
         val events = mutableListOf<String>()
+        val stopMixerJsons = mutableListOf<String?>()
         override suspend fun onPhaseSelected(phaseId: Long, mixerConfigJson: String?) {
             events += "phase:$phaseId"
         }
@@ -325,6 +414,7 @@ class PlaybackControllerAndServiceTest {
         }
         override suspend fun onTrackStop(trackId: Long, mixerConfigJson: String?) {
             events += "stop:$trackId"
+            stopMixerJsons += mixerConfigJson
         }
     }
 
@@ -337,6 +427,7 @@ class PlaybackControllerAndServiceTest {
         var transposeCalls = 0
         var volumeCalls = 0
         var seekCalls = 0
+        var lastPreferredDevice: AudioDeviceInfo? = null
 
         override fun start(
             uriString: String,
@@ -355,6 +446,7 @@ class PlaybackControllerAndServiceTest {
         override fun updateLiveTranspose(semitones: Int) { transposeCalls++ }
         override fun updateLiveVolume(volume: Float) { volumeCalls++ }
         override fun seekLive(positionMs: Long) { seekCalls++ }
+        override fun setPreferredOutputDevice(device: AudioDeviceInfo?) { lastPreferredDevice = device }
     }
 
     private class FakeAudioEngine : AudioPlaybackEngine {
@@ -365,6 +457,7 @@ class PlaybackControllerAndServiceTest {
         var transposeCalls = 0
         var volumeCalls = 0
         var seekCalls = 0
+        var lastPreferredDevice: AudioDeviceInfo? = null
 
         override fun start(
             uriString: String,
@@ -381,5 +474,6 @@ class PlaybackControllerAndServiceTest {
         override fun updateLiveTranspose(semitones: Int) { transposeCalls++ }
         override fun updateLiveVolume(volume: Float) { volumeCalls++ }
         override fun seekLive(positionMs: Long) { seekCalls++ }
+        override fun setPreferredOutputDevice(device: AudioDeviceInfo?) { lastPreferredDevice = device }
     }
 }

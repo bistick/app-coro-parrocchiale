@@ -1,6 +1,8 @@
 package it.parrocchia.coro
 
+import android.content.Intent
 import android.graphics.Color as AndroidColor
+import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
@@ -24,6 +26,7 @@ import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSiz
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -39,9 +42,11 @@ import it.parrocchia.coro.ui.CoroViewModel
 import it.parrocchia.coro.ui.screens.LibraryScreen
 import it.parrocchia.coro.ui.screens.LiveExecutionScreen
 import it.parrocchia.coro.ui.screens.PlannerScreen
+import it.parrocchia.coro.ui.screens.RodeMixerScreen
 import it.parrocchia.coro.ui.screens.SettingsScreen
 import it.parrocchia.coro.ui.theme.CoroColors
 import it.parrocchia.coro.ui.theme.CoroTheme
+import it.parrocchia.coro.ui.theme.isCoroDarkTheme
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -59,16 +64,46 @@ class MainActivity : ComponentActivity() {
         }
 
         val appContainer = (application as CoroApplication).container
+        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            appContainer.rodeMixerController.triggerAutoConnect()
+        }
 
         setContent {
             val windowSizeClass = calculateWindowSizeClass(this)
-            CoroTheme {
-                val vm: CoroViewModel = viewModel(factory = CoroViewModel.Factory(appContainer))
+            val vm: CoroViewModel = viewModel(factory = CoroViewModel.Factory(appContainer))
+            val settings by vm.settings.collectAsStateWithLifecycle()
+            val useDarkTheme = isCoroDarkTheme(settings.themeMode)
+
+            DisposableEffect(useDarkTheme) {
+                val barStyle = if (useDarkTheme) {
+                    SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+                }
+                enableEdgeToEdge(
+                    statusBarStyle = barStyle,
+                    navigationBarStyle = barStyle
+                )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.isNavigationBarContrastEnforced = false
+                }
+                onDispose {}
+            }
+
+            CoroTheme(themeMode = settings.themeMode) {
                 CoroRootApp(
                     viewModel = vm,
                     windowSizeClass = windowSizeClass
                 )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            (application as CoroApplication).container.rodeMixerController.triggerAutoConnect()
         }
     }
 
@@ -117,6 +152,7 @@ private object Routes {
     const val PLANNER = "planner"
     const val LIVE = "live"
     const val SETTINGS = "settings"
+    const val MIXER = "mixer"
     const val LIBRARY_BASE = "library"
     const val LIBRARY_ROUTE = "library?phaseId={phaseId}&phaseName={phaseName}"
 
@@ -140,6 +176,8 @@ private fun CoroRootApp(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
+    val rodeMixerState by viewModel.rodeMixerState.collectAsStateWithLifecycle()
+    val audioOutputStatus by viewModel.audioOutputStatus.collectAsStateWithLifecycle()
 
     LaunchedEffect(toastMessage) {
         val msg = toastMessage ?: return@LaunchedEffect
@@ -190,6 +228,10 @@ private fun CoroRootApp(
                         onApplySavedTemplate = viewModel::applySavedTemplate,
                         onDeleteSavedTemplate = viewModel::deleteSavedTemplate,
                         onOpenLibrary = { navController.navigate(Routes.LIBRARY_BASE) },
+                        onOpenMixer = { navController.navigate(Routes.MIXER) },
+                        isMixerConnected = rodeMixerState.isConnected,
+                        availableMixerFaders = rodeMixerState.assignedFaders,
+                        automationConfig = settings.rodeAutomationConfig,
                         onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                         onEnterLiveMode = {
                             viewModel.playbackController.stopPreviewIfActive()
@@ -209,6 +251,8 @@ private fun CoroRootApp(
                         onStopImmediate = viewModel::stopImmediateLive,
                         onResetPlayedFlags = viewModel::resetSessionPlayed,
                         onDismissError = viewModel::dismissPlaybackError,
+                        onOpenMixer = { navController.navigate(Routes.MIXER) },
+                        isMixerConnected = rodeMixerState.isConnected,
                         onExitLiveMode = { navController.popBackStack() }
                     )
                 }
@@ -248,7 +292,9 @@ private fun CoroRootApp(
                         onSaveSongDefaults = { song, newSettings ->
                             viewModel.saveSongDefaultsOnly(song.id, newSettings, song.durationMs)
                         },
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        availableMixerFaders = rodeMixerState.assignedFaders,
+                        automationConfig = settings.rodeAutomationConfig
                     )
                 }
 
@@ -264,6 +310,34 @@ private fun CoroRootApp(
                         onSetHoldDurationMs = viewModel::setHoldDurationMs,
                         onSetDefaultFadeOutMs = viewModel::setDefaultFadeOutMs,
                         onSetKeepScreenOn = viewModel::setKeepScreenOnInLive,
+                        onSetThemeMode = viewModel::setThemeMode,
+                        onOpenMixer = { navController.navigate(Routes.MIXER) },
+                        isMixerConnected = rodeMixerState.isConnected,
+                        availableMixerFaders = rodeMixerState.assignedFaders,
+                        onUpdateRodeAutomationConfig = viewModel::setRodeAutomationConfig,
+                        onMuteAllRodeFaders = viewModel::muteAllRodeFaders,
+                        audioOutputStatus = audioOutputStatus,
+                        onSelectAudioOutputRoute = viewModel::setAudioOutputRoute,
+                        onRefreshAudioOutputDevices = viewModel::refreshAudioOutputDevices,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+
+                composable(Routes.MIXER) {
+                    RodeMixerScreen(
+                        mixerState = rodeMixerState,
+                        onConnect = viewModel::connectRodeMixer,
+                        onRefresh = viewModel::refreshRodeMixer,
+                        onDisconnect = viewModel::disconnectRodeMixer,
+                        onSetChannelMute = viewModel::setRodeChannelMute,
+                        onDismissError = viewModel::dismissRodeMixerError,
+                        onUpdateAutomationConfig = viewModel::setRodeAutomationConfig,
+                        onMuteAllFaders = viewModel::muteAllRodeFaders,
+                        onSetMonitorMute = viewModel::setRodeMonitorMute,
+                        onSetMonitorAutoMute = viewModel::setRodeMonitorAutoMute,
+                        audioOutputStatus = audioOutputStatus,
+                        onSelectAudioOutputRoute = viewModel::setAudioOutputRoute,
+                        onRefreshAudioOutputDevices = viewModel::refreshAudioOutputDevices,
                         onBack = { navController.popBackStack() }
                     )
                 }

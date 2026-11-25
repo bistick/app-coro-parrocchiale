@@ -1,8 +1,11 @@
 package it.parrocchia.coro
 
+import android.content.Context
+import android.provider.Settings
 import androidx.compose.material3.Text
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasSetTextAction
@@ -17,6 +20,8 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.test.core.app.ApplicationProvider
 import io.mockk.mockk
 import it.parrocchia.coro.audio.PlaybackController
 import it.parrocchia.coro.audio.PlaybackState
@@ -138,6 +143,55 @@ class ComposeUiBehaviorTest {
         composeRule.onNodeWithText("AVVIA BRANO").assertIsDisplayed()
         composeRule.onNodeWithText("AVVIA BRANO").performClick()
         assertFalse("Un tocco breve non deve confermare l'azione live", confirmed)
+    }
+
+    @Test
+    fun holdToConfirmSurface_respectsHoldDurationEvenWhenAnimationsAreDisabledLikeEInkBoox() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
+        try {
+            var confirmedCount = 0
+            composeRule.mainClock.autoAdvance = false
+            composeRule.setContent {
+                CoroTheme {
+                    HoldToConfirmSurface(
+                        holdDurationMs = 500,
+                        onConfirmed = { confirmedCount++ },
+                        containerColor = CoroColors.PlayGreen,
+                        progressFillColor = CoroColors.PlayGreenFill,
+                        contentDescriptionText = "Avvia brano"
+                    ) { isHolding ->
+                        Text(if (isHolding) "Tieni premuto" else "AVVIA BRANO")
+                    }
+                }
+            }
+            composeRule.mainClock.advanceTimeBy(50L)
+
+            // 1) Tocco breve di 120 ms su dispositivo con animazioni disattivate (es. BOOX Tab Mini C): NON deve partire
+            composeRule.onNodeWithContentDescription("Avvia brano").performTouchInput {
+                down(center)
+            }
+            composeRule.mainClock.advanceTimeBy(120L)
+            assertEquals("Non deve attivarsi appena premuto con animator_duration_scale=0", 0, confirmedCount)
+            composeRule.onNodeWithContentDescription("Avvia brano").performTouchInput {
+                up()
+            }
+            composeRule.mainClock.advanceTimeBy(100L)
+            assertEquals("Non deve attivarsi dopo rilascio anticipato", 0, confirmedCount)
+
+            // 2) Pressione prolungata completa (>= 500 ms): DEVE partire regolarmente
+            composeRule.onNodeWithContentDescription("Avvia brano").performTouchInput {
+                down(center)
+            }
+            composeRule.mainClock.advanceTimeBy(550L)
+            assertEquals("Deve attivarsi dopo l'intera durata della pressione prolungata", 1, confirmedCount)
+            composeRule.onNodeWithContentDescription("Avvia brano").performTouchInput {
+                up()
+            }
+            composeRule.mainClock.advanceTimeBy(50L)
+        } finally {
+            Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        }
     }
 
     @Test
@@ -369,19 +423,22 @@ class ComposeUiBehaviorTest {
         var reloadedDemo = false
         var resetSf = false
         var backed = false
+        val settingsState = androidx.compose.runtime.mutableStateOf(
+            AppSettings(
+                libraryFolderUri = "content://tree/canti",
+                libraryFolderName = "Canti Coro",
+                customSoundFontLocalPath = "/data/sf/GeneralUser.sf3",
+                customSoundFontName = "GeneralUser.sf3",
+                holdDurationMs = 500,
+                defaultFadeOutMs = 3000,
+                keepScreenOnInLive = true
+            )
+        )
 
         composeRule.setContent {
-            CoroTheme {
+            CoroTheme(themeMode = settingsState.value.themeMode) {
                 SettingsScreen(
-                    settings = AppSettings(
-                        libraryFolderUri = "content://tree/canti",
-                        libraryFolderName = "Canti Coro",
-                        customSoundFontLocalPath = "/data/sf/GeneralUser.sf3",
-                        customSoundFontName = "GeneralUser.sf3",
-                        holdDurationMs = 500,
-                        defaultFadeOutMs = 3000,
-                        keepScreenOnInLive = true
-                    ),
+                    settings = settingsState.value,
                     isScanning = false,
                     onSelectLibraryFolder = { _, _ -> },
                     onRescanLibrary = { rescanned = true },
@@ -391,6 +448,9 @@ class ComposeUiBehaviorTest {
                     onSetHoldDurationMs = {},
                     onSetDefaultFadeOutMs = {},
                     onSetKeepScreenOn = {},
+                    onSetThemeMode = { mode ->
+                        settingsState.value = settingsState.value.copy(themeMode = mode)
+                    },
                     onBack = { backed = true }
                 )
             }
@@ -408,6 +468,20 @@ class ComposeUiBehaviorTest {
 
         composeRule.onNodeWithContentDescription("Indietro").performClick()
         assertTrue(backed)
+
+        // Selettore tema Chiaro / Scuro / Sistema
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Tema dell'app"))
+        composeRule.onNodeWithText("Chiaro").performClick()
+        composeRule.waitForIdle()
+        assertEquals(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT, settingsState.value.themeMode)
+
+        composeRule.onNodeWithText("Sistema").performClick()
+        composeRule.waitForIdle()
+        assertEquals(it.parrocchia.coro.domain.model.AppThemeMode.SYSTEM, settingsState.value.themeMode)
+
+        composeRule.onNodeWithText("Scuro").performClick()
+        composeRule.waitForIdle()
+        assertEquals(it.parrocchia.coro.domain.model.AppThemeMode.DARK, settingsState.value.themeMode)
     }
 
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
@@ -467,6 +541,52 @@ class ComposeUiBehaviorTest {
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     @Test
     fun liveExecutionScreen_rendersExpandedTabletDeskLayout() {
+        val song1 = SongEntity(
+            id = 1L,
+            uri = "asset:///demo/01.mid",
+            title = "Gloria in Excelsis",
+            fileName = "01.mid",
+            format = AudioFormat.MIDI.name,
+            durationMs = 120_000L
+        )
+        val song2 = SongEntity(
+            id = 2L,
+            uri = "asset:///demo/02.mid",
+            title = "Alleluia Pasquale",
+            fileName = "02.mid",
+            format = AudioFormat.MIDI.name,
+            durationMs = 90_000L
+        )
+        val planHolder = androidx.compose.runtime.mutableStateOf(
+            MassPlanWithPhases(
+                plan = MassPlanEntity(
+                    id = 1L,
+                    title = "Messa Domenicale",
+                    dateEpochDay = 20_000L,
+                    templateCategory = MassPresetCatalog.DOMENICALE.id
+                ),
+                phases = listOf(
+                    PhaseWithTracks(
+                        MassPhaseEntity(10L, 1L, StandardPhaseType.INGRESSO.name, null, 10, true),
+                        listOf(
+                            PlannedTrackWithSong(
+                                PlannedTrackEntity(id = 100L, phaseId = 10L, songId = 1L, sortOrder = 0, playedInSession = false),
+                                song1
+                            )
+                        )
+                    ),
+                    PhaseWithTracks(
+                        MassPhaseEntity(20L, 1L, StandardPhaseType.ALLELUIA.name, null, 20, true),
+                        listOf(
+                            PlannedTrackWithSong(
+                                PlannedTrackEntity(id = 200L, phaseId = 20L, songId = 2L, sortOrder = 0, playedInSession = false),
+                                song2
+                            )
+                        )
+                    )
+                )
+            )
+        )
         val playbackFlow = MutableStateFlow(
             PlaybackState(
                 status = PlaybackStatus.PLAYING,
@@ -485,7 +605,7 @@ class ComposeUiBehaviorTest {
         composeRule.setContent {
             CoroTheme {
                 LiveExecutionScreen(
-                    massPlan = sampleMassPlan(withTracks = true),
+                    massPlan = planHolder.value,
                     settings = AppSettings(keepScreenOnInLive = false),
                     playbackStateFlow = playbackFlow,
                     windowSizeClass = expandedClass,
@@ -500,5 +620,229 @@ class ComposeUiBehaviorTest {
         }
         composeRule.mainClock.advanceTimeBy(100L)
         composeRule.onAllNodesWithText("Gloria in Excelsis").onFirst().assertIsDisplayed()
+
+        // Appena si preme SFUMA: il brano corrente è segnato come fatto e il successivo diventa subito PROSSIMO
+        planHolder.value = planHolder.value.copy(
+            phases = listOf(
+                PhaseWithTracks(
+                    MassPhaseEntity(10L, 1L, StandardPhaseType.INGRESSO.name, null, 10, true),
+                    listOf(
+                        PlannedTrackWithSong(
+                            PlannedTrackEntity(id = 100L, phaseId = 10L, songId = 1L, sortOrder = 0, playedInSession = true),
+                            song1
+                        )
+                    )
+                ),
+                planHolder.value.phases[1]
+            )
+        )
+        playbackFlow.value = PlaybackState(
+            status = PlaybackStatus.FADING_OUT,
+            activeTrackId = 100L,
+            lastLiveTrackId = 100L,
+            title = "Gloria in Excelsis",
+            phaseLabel = "Ingresso",
+            positionMs = 31_000L,
+            durationMs = 120_000L,
+            fadeOutMs = 3000,
+            isPreview = false
+        )
+        composeRule.mainClock.advanceTimeBy(100L)
+        composeRule.onNodeWithText("FATTO · SFUMA").assertIsDisplayed()
+        composeRule.onNodeWithText("PROSSIMO").assertIsDisplayed()
+        composeRule.onNodeWithText("Prossimo: Acclamazione al Vangelo — Alleluia Pasquale").assertExists()
+    }
+
+    @Test
+    fun rodeMixerScreen_rendersDisconnectedAndConnectedMuteControlsOnly() {
+        var connectedClicked = false
+        var refreshed = false
+        var disconnected = false
+        var dismissedErr = false
+        var lastMute: Pair<Int, Boolean>? = null
+        var lastMonitorMute: Boolean? = null
+        var lastMonitorAutoMute: Boolean? = null
+        var selectedAudioRoute: it.parrocchia.coro.domain.model.AudioOutputRoute? = null
+        var updatedAuto: it.parrocchia.coro.domain.mixer.RodeAutomationConfig? = null
+        var muteAllClicked = false
+
+        val stateHolder = androidx.compose.runtime.mutableStateOf(
+            it.parrocchia.coro.domain.mixer.RodeMixerState(
+                status = it.parrocchia.coro.domain.mixer.RodeConnectionStatus.DISCONNECTED,
+                errorMessage = "Cavo non collegato"
+            )
+        )
+
+        composeRule.setContent {
+            CoroTheme {
+                it.parrocchia.coro.ui.screens.RodeMixerScreen(
+                    mixerState = stateHolder.value,
+                    onConnect = { connectedClicked = true },
+                    onRefresh = { refreshed = true },
+                    onDisconnect = { disconnected = true },
+                    onSetChannelMute = { idx, muted -> lastMute = idx to muted },
+                    onDismissError = { dismissedErr = true },
+                    onUpdateAutomationConfig = { updatedAuto = it },
+                    onMuteAllFaders = { muteAllClicked = true },
+                    onSetMonitorMute = { lastMonitorMute = it },
+                    onSetMonitorAutoMute = { lastMonitorAutoMute = it },
+                    audioOutputStatus = it.parrocchia.coro.domain.model.AudioOutputStatus(
+                        selectedRoute = it.parrocchia.coro.domain.model.AudioOutputRoute.AUTO,
+                        bluetoothDevice = it.parrocchia.coro.domain.model.AudioOutputDeviceSummary(
+                            1,
+                            "RØDECaster BT",
+                            it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH
+                        ),
+                        usbDevice = it.parrocchia.coro.domain.model.AudioOutputDeviceSummary(
+                            2,
+                            "RØDECaster USB",
+                            it.parrocchia.coro.domain.model.AudioOutputRoute.USB
+                        )
+                    ),
+                    onSelectAudioOutputRoute = { selectedAudioRoute = it },
+                    onBack = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Mixer").assertIsDisplayed()
+        composeRule.onNodeWithText("RØDECaster Pro II").assertIsDisplayed()
+        composeRule.onNodeWithText("Cavo non collegato").assertIsDisplayed()
+        composeRule.onNodeWithText("OK").performClick()
+        assertTrue(dismissedErr)
+
+        composeRule.onNodeWithText("Collega mixer").performClick()
+        assertTrue(connectedClicked)
+
+        // Stato connesso: Monitor in muto + Auto-Muto attivo + Fader 1 (Mic 1, Muto) + Fader 7 (USB 1 Main, Attivo) + Fader 3 vuoto
+        stateHolder.value = it.parrocchia.coro.domain.mixer.RodeMixerState(
+            status = it.parrocchia.coro.domain.mixer.RodeConnectionStatus.CONNECTED,
+            deviceName = "RØDECaster Pro II",
+            firmwareVersion = "1.7.7",
+            monitorMuted = true,
+            monitorAutoMuteEnabled = true,
+            monitorAutoMuteActive = false,
+            faders = listOf(
+                it.parrocchia.coro.domain.mixer.RodeVirtualFader(
+                    faderIndex = 0,
+                    assignedSourceCode = 0,
+                    assignedLabel = "Mic 1",
+                    level = 90,
+                    isMuted = true
+                ),
+                it.parrocchia.coro.domain.mixer.RodeVirtualFader(
+                    faderIndex = 2,
+                    assignedSourceCode = null,
+                    assignedLabel = "Vuoto",
+                    level = 0
+                ),
+                it.parrocchia.coro.domain.mixer.RodeVirtualFader(
+                    faderIndex = 6,
+                    assignedSourceCode = 7,
+                    assignedLabel = "USB 1 (Main)",
+                    level = 100,
+                    isMuted = false
+                )
+            )
+        )
+        composeRule.waitForIdle()
+
+        // Il nome del mixer appare una sola volta e NON ci sono controlli volume/gain/override
+        composeRule.onAllNodesWithText("RØDECaster Pro II").assertCountEquals(1)
+        composeRule.onNodeWithText("Gain ingresso").assertDoesNotExist()
+        composeRule.onNodeWithText("Solo Casse").assertDoesNotExist()
+        composeRule.onNodeWithText("+5%").assertDoesNotExist()
+        composeRule.onNodeWithText("-5%").assertDoesNotExist()
+
+        // Card Uscita casse esterne (Monitor)
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Uscita casse esterne (Monitor)"))
+        composeRule.onNodeWithText("Casse in Muto").assertIsDisplayed()
+        composeRule.onNodeWithText("Riattiva casse").performClick()
+        assertEquals(false, lastMonitorMute)
+        composeRule.onNodeWithText("Auto-Muto casse su microfoni (mixer)").assertIsDisplayed()
+
+        // Fader 1: Muto -> click toglie il muto
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Fader 1 · Mic 1"))
+        composeRule.onNodeWithText("Fader 1 · Mic 1").assertIsDisplayed()
+        composeRule.onNodeWithText("Fader 3 · Vuoto").assertDoesNotExist()
+        composeRule.onNodeWithText("Muto").performClick()
+        assertEquals(0 to false, lastMute)
+
+        // Fader 7: Attivo -> click mette in muto
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Fader 7 · USB 1 (Main)"))
+        composeRule.onNodeWithText("Fader 7 · USB 1 (Main)").assertIsDisplayed()
+        composeRule.onNodeWithText("Attivo").performClick()
+        assertEquals(6 to true, lastMute)
+
+        // Automazione Muto + bottone Metti tutti i canali in Muto ora + Proteggi uscita casse esterne
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Metti tutti i canali in Muto ora"))
+        composeRule.onNodeWithText("Metti tutti i canali in Muto ora").performClick()
+        assertTrue(muteAllClicked)
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Canale musica da aprire sempre all'avvio"))
+        composeRule.onAllNodesWithText("F7 · USB 1 (Main)").onFirst().performClick()
+        assertTrue(6 in (updatedAuto?.musicFaderIndices ?: emptySet()))
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Canali da mettere sempre in Muto a fine brano"))
+        composeRule.onAllNodesWithText("F1 · Mic 1")[1].performClick()
+        assertTrue(0 in (updatedAuto?.alwaysMuteOnStopFaderIndices ?: emptySet()))
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Proteggi uscita casse esterne"))
+        composeRule.onNodeWithText("Proteggi uscita casse esterne").assertIsDisplayed()
+        assertEquals(null, lastMonitorAutoMute)
+
+        // Selettore uscita audio BT / USB
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Uscita audio (BT / USB)"))
+        composeRule.onNodeWithText("Bluetooth").performClick()
+        assertEquals(it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH, selectedAudioRoute)
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Aggiorna"))
+        composeRule.onNodeWithText("Aggiorna").performClick()
+        assertTrue(refreshed)
+        composeRule.onNodeWithText("Disconnetti").performClick()
+        assertTrue(disconnected)
+    }
+
+    @Test
+    fun trackSettingsSheet_selectsExtraMicChannelsToUnmute() {
+        val song = SongEntity(
+            id = 55L,
+            uri = "asset:///demo/01.mid",
+            title = "Salmo Responsoriale",
+            fileName = "03_salmo.mid",
+            format = AudioFormat.MIDI.name,
+            durationMs = 90_000L
+        )
+        val controller = mockk<PlaybackController>(relaxed = true)
+        val playbackFlow = MutableStateFlow(PlaybackState())
+        var savedSettings: TrackSettings? = null
+
+        composeRule.setContent {
+            CoroTheme {
+                TrackSettingsSheet(
+                    song = song,
+                    initialSettings = TrackSettings(),
+                    showSaveAsDefaultToggle = true,
+                    playbackStateFlow = playbackFlow,
+                    playbackController = controller,
+                    availableMixerFaders = listOf(
+                        it.parrocchia.coro.domain.mixer.RodeVirtualFader(0, 0, "Mic 1", 100, true),
+                        it.parrocchia.coro.domain.mixer.RodeVirtualFader(6, 7, "USB 1 Chat", 100, true)
+                    ),
+                    automationConfig = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(
+                        enabled = true,
+                        musicFaderIndices = setOf(6),
+                        alwaysMuteOnStopFaderIndices = setOf(0)
+                    ),
+                    onSave = { s, _ -> savedSettings = s },
+                    onDismiss = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Canali da aprire sul mixer (Muto)").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("F1 · Mic 1").performScrollTo().clickSheetAction()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Salva").performScrollTo().clickSheetAction()
+        composeRule.waitForIdle()
+        val decoded = it.parrocchia.coro.domain.mixer.RodeMixerPresetCodec.decode(savedSettings?.mixerConfigJson)
+        assertEquals(setOf(0), decoded?.unmuteFaderIndices)
     }
 }

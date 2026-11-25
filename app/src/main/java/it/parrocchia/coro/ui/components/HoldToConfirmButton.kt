@@ -18,6 +18,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
@@ -33,13 +34,25 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
+ * Scala temporale fissa 1:1 per la barra di avanzamento della pressione prolungata.
+ * Indispensabile su dispositivi e-ink (es. Onyx BOOX Tab Mini C) o con "Rimuovi animazioni"
+ * attivo in Android (`Settings.Global.ANIMATOR_DURATION_SCALE == 0f`), dove altrimenti
+ * `Animatable.animateTo` terminerebbe istantaneamente in 0 ms al primo tocco.
+ */
+private object RealTimeMotionDurationScale : MotionDurationScale {
+    override val scaleFactor: Float get() = 1f
+}
+
+/**
  * Pulsante protetto contro tocchi accidentali:
- * si attiva solo mantenendo la pressione per [holdDurationMs] millisecondi.
+ * si attiva solo mantenendo la pressione per [holdDurationMs] millisecondi reali.
  * Compatibile con lo scorrimento di LazyColumn (se l'utente trascina per scorrere,
- * la pressione viene annullata automaticamente senza attivare il comando).
+ * la pressione viene annullata automaticamente senza attivare il comando) e immune
+ * alla disattivazione delle animazioni di sistema (es. tablet e-ink BOOX).
  *
  * Ottimizzazione performance: l'avanzamento dell'animazione viene letto esclusivamente
  * in fase di Draw tramite [Modifier.drawBehind], evitando ricomposizioni a 60-120fps.
@@ -97,21 +110,30 @@ fun HoldToConfirmSurface(
                     onPress = {
                         isHolding = true
                         var triggered = false
-                        val animJob = scope.launch {
+                        val holdJob = scope.launch {
                             try {
-                                progress.snapTo(0f)
-                                progress.animateTo(
-                                    targetValue = 1f,
-                                    animationSpec = tween(
-                                        durationMillis = latestHoldDuration,
-                                        easing = LinearEasing
+                                val durationMs = latestHoldDuration
+                                val visualJob = launch(RealTimeMotionDurationScale) {
+                                    progress.snapTo(0f)
+                                    progress.animateTo(
+                                        targetValue = 1f,
+                                        animationSpec = tween(
+                                            durationMillis = durationMs,
+                                            easing = LinearEasing
+                                        )
                                     )
-                                )
+                                }
+                                try {
+                                    delay(durationMs.toLong())
+                                } finally {
+                                    visualJob.cancel()
+                                }
+                                progress.snapTo(1f)
                                 triggered = true
                                 latestHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 latestOnConfirmed()
                             } catch (_: CancellationException) {
-                                // Annullato prima del completamento
+                                // Annullato prima del completamento (rilascio anticipato o scroll)
                             }
                         }
 
@@ -120,7 +142,7 @@ fun HoldToConfirmSurface(
                         } finally {
                             isHolding = false
                             if (!triggered) {
-                                animJob.cancel()
+                                holdJob.cancel()
                             }
                             scope.launch {
                                 progress.snapTo(0f)

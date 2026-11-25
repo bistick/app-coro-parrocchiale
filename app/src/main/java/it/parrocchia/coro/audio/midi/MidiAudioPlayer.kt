@@ -2,6 +2,7 @@ package it.parrocchia.coro.audio.midi
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat as AndroidAudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -29,6 +30,7 @@ interface MidiPlaybackEngine {
     fun updateLiveTranspose(semitones: Int)
     fun updateLiveVolume(volume: Float)
     fun seekLive(positionMs: Long)
+    fun setPreferredOutputDevice(device: AudioDeviceInfo?) = Unit
 }
 
 /**
@@ -61,6 +63,12 @@ class MidiAudioPlayer(private val context: Context) : MidiPlaybackEngine {
 
     private val pendingTranspose = AtomicInteger(Int.MIN_VALUE)
     private val pendingSeekMs = AtomicLong(-1L)
+
+    @Volatile
+    private var preferredOutputDevice: AudioDeviceInfo? = null
+
+    @Volatile
+    private var activeAudioTrack: AudioTrack? = null
 
     override fun start(
         uriString: String,
@@ -160,6 +168,11 @@ class MidiAudioPlayer(private val context: Context) : MidiPlaybackEngine {
         pendingSeekMs.set(positionMs.coerceAtLeast(0L))
     }
 
+    override fun setPreferredOutputDevice(device: AudioDeviceInfo?) {
+        preferredOutputDevice = device
+        runCatching { activeAudioTrack?.setPreferredDevice(device) }
+    }
+
     private fun runRenderLoop(
         midiBytes: ByteArray,
         soundFontPath: String,
@@ -215,6 +228,8 @@ class MidiAudioPlayer(private val context: Context) : MidiPlaybackEngine {
                 .build()
 
             audioTrack = track
+            activeAudioTrack = track
+            runCatching { track.setPreferredDevice(preferredOutputDevice) }
             track.play()
 
             val pcm = FloatArray(BLOCK_FRAMES * 2)
@@ -299,6 +314,7 @@ class MidiAudioPlayer(private val context: Context) : MidiPlaybackEngine {
                 listener.onError("Errore riproduzione MIDI: ${e.message ?: "sconosciuto"}")
             }
         } finally {
+            activeAudioTrack = null
             try {
                 audioTrack?.pause()
                 audioTrack?.flush()

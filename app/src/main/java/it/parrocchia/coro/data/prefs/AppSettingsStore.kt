@@ -8,6 +8,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
+import it.parrocchia.coro.domain.mixer.RodeAutomationConfigCodec
+import it.parrocchia.coro.domain.model.AppThemeMode
+import it.parrocchia.coro.domain.model.AudioOutputRoute
 import it.parrocchia.coro.domain.model.TrackSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -21,11 +25,15 @@ data class AppSettings(
     val customSoundFontLocalPath: String? = null,
     val holdDurationMs: Int = DEFAULT_HOLD_DURATION_MS,
     val defaultFadeOutMs: Int = TrackSettings.DEFAULT_FADE_OUT_MS,
-    val keepScreenOnInLive: Boolean = true
+    val keepScreenOnInLive: Boolean = true,
+    val themeMode: AppThemeMode = AppThemeMode.DARK,
+    val audioOutputRoute: AudioOutputRoute = AudioOutputRoute.AUTO,
+    val rodeAutomationConfig: RodeAutomationConfig = RodeAutomationConfig(),
+    val hasConfiguredRodeMusicChannel: Boolean = false
 ) {
     companion object {
         const val MIN_HOLD_DURATION_MS = 300
-        const val MAX_HOLD_DURATION_MS = 800
+        const val MAX_HOLD_DURATION_MS = 1200
         const val DEFAULT_HOLD_DURATION_MS = 450
     }
 }
@@ -42,9 +50,14 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
         val HOLD_DURATION_MS = intPreferencesKey("hold_duration_ms")
         val DEFAULT_FADE_OUT_MS = intPreferencesKey("default_fade_out_ms")
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on_live")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
+        val AUDIO_OUTPUT_ROUTE = stringPreferencesKey("audio_output_route")
+        val RODE_AUTOMATION_JSON = stringPreferencesKey("rode_automation_json")
+        val RODE_MUSIC_CHANNEL_CONFIGURED = booleanPreferencesKey("rode_music_channel_configured")
     }
 
     val settings: Flow<AppSettings> = dataStore.data.map { prefs ->
+        val decodedRodeConfig = RodeAutomationConfigCodec.decode(prefs[Keys.RODE_AUTOMATION_JSON])
         AppSettings(
             libraryFolderUri = prefs[Keys.LIBRARY_FOLDER_URI],
             libraryFolderName = prefs[Keys.LIBRARY_FOLDER_NAME],
@@ -54,7 +67,13 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
                 .coerceIn(AppSettings.MIN_HOLD_DURATION_MS, AppSettings.MAX_HOLD_DURATION_MS),
             defaultFadeOutMs = (prefs[Keys.DEFAULT_FADE_OUT_MS] ?: TrackSettings.DEFAULT_FADE_OUT_MS)
                 .coerceIn(TrackSettings.MIN_FADE_OUT_MS, TrackSettings.MAX_FADE_OUT_MS),
-            keepScreenOnInLive = prefs[Keys.KEEP_SCREEN_ON] ?: true
+            keepScreenOnInLive = prefs[Keys.KEEP_SCREEN_ON] ?: true,
+            themeMode = AppThemeMode.fromStoredName(prefs[Keys.THEME_MODE]),
+            audioOutputRoute = AudioOutputRoute.fromStoredName(prefs[Keys.AUDIO_OUTPUT_ROUTE]),
+            rodeAutomationConfig = decodedRodeConfig,
+            hasConfiguredRodeMusicChannel = (prefs[Keys.RODE_MUSIC_CHANNEL_CONFIGURED] == true) ||
+                decodedRodeConfig.musicFaderIndices.isNotEmpty() ||
+                decodedRodeConfig.alwaysMuteOnStopFaderIndices.isNotEmpty()
         )
     }
 
@@ -94,5 +113,28 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setKeepScreenOnInLive(enabled: Boolean) {
         dataStore.edit { it[Keys.KEEP_SCREEN_ON] = enabled }
+    }
+
+    suspend fun setThemeMode(mode: AppThemeMode) {
+        dataStore.edit { it[Keys.THEME_MODE] = mode.name }
+    }
+
+    suspend fun setAudioOutputRoute(route: AudioOutputRoute) {
+        dataStore.edit { it[Keys.AUDIO_OUTPUT_ROUTE] = route.name }
+    }
+
+    suspend fun setRodeAutomationConfig(
+        config: RodeAutomationConfig,
+        markChannelsConfigured: Boolean = true
+    ) {
+        dataStore.edit { prefs ->
+            prefs[Keys.RODE_AUTOMATION_JSON] = RodeAutomationConfigCodec.encode(config)
+            if (markChannelsConfigured ||
+                config.musicFaderIndices.isNotEmpty() ||
+                config.alwaysMuteOnStopFaderIndices.isNotEmpty()
+            ) {
+                prefs[Keys.RODE_MUSIC_CHANNEL_CONFIGURED] = true
+            }
+        }
     }
 }

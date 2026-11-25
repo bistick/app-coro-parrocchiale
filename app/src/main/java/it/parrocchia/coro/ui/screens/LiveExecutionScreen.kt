@@ -51,10 +51,12 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -101,6 +103,7 @@ import it.parrocchia.coro.audio.PlaybackStatus
 import it.parrocchia.coro.data.db.MassPlanWithPhases
 import it.parrocchia.coro.data.db.PlannedTrackWithSong
 import it.parrocchia.coro.data.prefs.AppSettings
+import it.parrocchia.coro.domain.mixer.RodeMixerPresetCodec
 import it.parrocchia.coro.domain.model.TrackSettings
 import it.parrocchia.coro.ui.components.HoldToConfirmSurface
 import it.parrocchia.coro.ui.theme.CoroColors
@@ -127,7 +130,9 @@ fun LiveExecutionScreen(
     onStopImmediate: () -> Unit,
     onResetPlayedFlags: (planId: Long) -> Unit,
     onDismissError: () -> Unit,
-    onExitLiveMode: () -> Unit
+    onExitLiveMode: () -> Unit,
+    onOpenMixer: () -> Unit = {},
+    isMixerConnected: Boolean = false
 ) {
     val context = LocalContext.current
     var exitHintVisible by rememberSaveable { mutableStateOf(false) }
@@ -158,6 +163,11 @@ fun LiveExecutionScreen(
         derivedStateOf {
             val s = playbackStateHolder.value
             if (!s.isPreview && s.isBusy) s.activeTrackId else null
+        }
+    }
+    val lastLiveTrackId by remember {
+        derivedStateOf {
+            playbackStateHolder.value.lastLiveTrackId
         }
     }
     val liveErrorMessage by remember {
@@ -219,8 +229,25 @@ fun LiveExecutionScreen(
         }
     }
 
-    val nextEntry = remember(liveEntries) {
-        liveEntries.firstOrNull { !it.item.track.playedInSession } ?: liveEntries.firstOrNull()
+    val nextEntry = remember(liveEntries, lastLiveTrackId) {
+        if (liveEntries.isEmpty()) {
+            null
+        } else {
+            val anchorIdx = if (lastLiveTrackId != null) {
+                liveEntries.indexOfFirst { it.item.track.id == lastLiveTrackId }
+            } else {
+                -1
+            }
+            if (anchorIdx >= 0) {
+                liveEntries.drop(anchorIdx + 1).firstOrNull { !it.item.track.playedInSession }
+                    ?: liveEntries.firstOrNull { !it.item.track.playedInSession }
+                    ?: liveEntries.getOrNull(anchorIdx + 1)
+                    ?: liveEntries.firstOrNull()
+            } else {
+                liveEntries.firstOrNull { !it.item.track.playedInSession }
+                    ?: liveEntries.firstOrNull()
+            }
+        }
     }
     val hasPlayedAny = remember(liveEntries) {
         liveEntries.any { it.item.track.playedInSession }
@@ -281,6 +308,8 @@ fun LiveExecutionScreen(
                 isLiveBusy = isLiveBusy,
                 showExitHint = exitHintVisible,
                 hasPlayedAny = hasPlayedAny,
+                isMixerConnected = isMixerConnected,
+                onOpenMixer = onOpenMixer,
                 onResetPlayed = { massPlan?.plan?.id?.let(onResetPlayedFlags) },
                 onExitLiveMode = onExitLiveMode
             )
@@ -340,7 +369,43 @@ fun LiveExecutionScreen(
                 }
             }
 
-            val contentTopPadding = if (errorMsg != null) 0.dp else innerPadding.calculateTopPadding()
+            val showAutomationOffBanner = isMixerConnected && !settings.rodeAutomationConfig.enabled
+            if (showAutomationOffBanner) {
+                Surface(
+                    color = CoroColors.FadeAmber,
+                    onClick = onOpenMixer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = if (errorMsg != null) 0.dp else innerPadding.calculateTopPadding())
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = innerPadding.calculateStartPadding(layoutDirection) + 16.dp,
+                                end = innerPadding.calculateEndPadding(layoutDirection) + 16.dp,
+                                top = 8.dp,
+                                bottom = 8.dp
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Automazione Muto mixer disattivata — tocca per attivarla",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            val contentTopPadding = if (errorMsg != null || showAutomationOffBanner) {
+                0.dp
+            } else {
+                innerPadding.calculateTopPadding()
+            }
 
             if (isWideLayout) {
                 val edgePad = if (isCompactHeight) 10.dp else 16.dp
@@ -422,6 +487,8 @@ private fun LiveTopHeader(
     isLiveBusy: Boolean,
     showExitHint: Boolean,
     hasPlayedAny: Boolean,
+    isMixerConnected: Boolean,
+    onOpenMixer: () -> Unit,
     onResetPlayed: () -> Unit,
     onExitLiveMode: () -> Unit
 ) {
@@ -498,6 +565,14 @@ private fun LiveTopHeader(
                     }
                 }
 
+                IconButton(onClick = onOpenMixer) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = "Mixer RØDECaster Pro II",
+                        tint = if (isMixerConnected) CoroColors.PlayedAccent else CoroColors.TextSecondary
+                    )
+                }
+
                 HoldToConfirmSurface(
                     holdDurationMs = holdDurationMs,
                     onConfirmed = onExitLiveMode,
@@ -568,6 +643,17 @@ private fun LiveTrackList(
     // Risolto una sola volta nel contenitore padre invece che dentro ogni item della LazyColumn
     val hapticFeedback = LocalHapticFeedback.current
 
+    LaunchedEffect(nextTrackId) {
+        if (nextTrackId == null || listState.isScrollInProgress) return@LaunchedEffect
+        val targetIndex = entries.indexOfFirst { it.item.track.id == nextTrackId }
+        if (targetIndex >= 0) {
+            val visibleIndices = listState.layoutInfo.visibleItemsInfo.map { it.index }
+            if (visibleIndices.isNotEmpty() && targetIndex !in visibleIndices) {
+                listState.animateScrollToItem(targetIndex)
+            }
+        }
+    }
+
     LazyColumn(
         state = listState,
         modifier = modifier,
@@ -582,11 +668,11 @@ private fun LiveTrackList(
             val track = entry.item.track
             val song = entry.item.song
             val isThisPlaying = isAnyLiveBusy && activeTrackId == track.id
-            val isThisNext = !isAnyLiveBusy && nextTrackId == track.id
+            val isThisNext = (!isAnyLiveBusy || isFadingOut) && nextTrackId == track.id && !isThisPlaying
             val isPlayed = track.playedInSession && !isThisPlaying
 
             val containerColor = when {
-                isThisPlaying && isFadingOut -> CoroColors.FadeAmber.copy(alpha = 0.28f)
+                isThisPlaying && isFadingOut -> CoroColors.PlayedMuted
                 isThisPlaying -> CoroColors.PlayGreen.copy(alpha = 0.32f)
                 isThisNext -> CoroColors.SurfaceHighlight
                 isPlayed -> CoroColors.PlayedMuted
@@ -638,7 +724,23 @@ private fun LiveTrackList(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
-                            if (isThisNext) {
+                            if (isThisPlaying && isFadingOut) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(CoroColors.FadeAmberFill)
+                                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "FATTO · SFUMA",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            } else if (isThisNext) {
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
@@ -676,10 +778,14 @@ private fun LiveTrackList(
                             track.transposeSemitones,
                             track.startOffsetMs,
                             track.fadeOutMs,
-                            track.volume
+                            track.volume,
+                            track.mixerConfigJson
                         ) {
                             buildList {
                                 add(song.audioFormat.shortLabel)
+                                RodeMixerPresetCodec.decode(track.mixerConfigJson)?.badgeLabel()?.let {
+                                    add(it)
+                                }
                                 if (track.transposeSemitones != 0) {
                                     add(TrackSettings.formatTranspose(track.transposeSemitones))
                                 }
@@ -708,6 +814,7 @@ private fun LiveTrackList(
                             .clip(RoundedCornerShape(14.dp))
                             .background(
                                 when {
+                                    isThisPlaying && isFadingOut -> CoroColors.PlayedAccent.copy(alpha = 0.2f)
                                     isThisPlaying -> CoroColors.PlayGreen
                                     isAnyLiveBusy -> CoroColors.SurfaceElevated
                                     isPlayed -> CoroColors.PlayedAccent.copy(alpha = 0.2f)
@@ -719,6 +826,7 @@ private fun LiveTrackList(
                     ) {
                         Icon(
                             imageVector = when {
+                                isThisPlaying && isFadingOut -> Icons.Default.CheckCircle
                                 isThisPlaying -> Icons.Default.GraphicEq
                                 isAnyLiveBusy -> Icons.Default.Lock
                                 isPlayed -> Icons.Default.CheckCircle
@@ -726,6 +834,7 @@ private fun LiveTrackList(
                             },
                             contentDescription = null,
                             tint = when {
+                                isThisPlaying && isFadingOut -> CoroColors.PlayedAccent
                                 isThisPlaying || isThisNext -> Color.White
                                 isPlayed -> CoroColors.PlayedAccent
                                 else -> CoroColors.TextPrimary
@@ -889,6 +998,8 @@ private fun LiveBottomProgressSection(
         ) {
             Text(
                 text = when {
+                    isFading && nextEntry != null ->
+                        "SFUMA · Prossimo: ${nextEntry.phaseLabel} — ${nextEntry.item.song.title}"
                     isFading -> "SFUMATURA IN CORSO · $activeTitle"
                     isPlaying -> "IN RIPRODUZIONE · $activeTitle"
                     nextEntry != null -> "Pronto: ${nextEntry.phaseLabel} — ${nextEntry.item.song.title}"
@@ -896,7 +1007,7 @@ private fun LiveBottomProgressSection(
                 },
                 style = MaterialTheme.typography.labelLarge,
                 color = when {
-                    isFading -> CoroColors.FadeAmberFill
+                    isFading -> CoroColors.Gold
                     isPlaying -> CoroColors.PlayGreenFill
                     else -> CoroColors.TextSecondary
                 },
@@ -999,6 +1110,16 @@ private fun LiveSideControlDesk(
                     maxLines = if (isCompactHeight) 2 else 3,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (isFading && nextEntry != null) {
+                    Text(
+                        text = "Prossimo: ${nextEntry.phaseLabel} — ${nextEntry.item.song.title}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = CoroColors.Gold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(if (isCompactHeight) 4.dp else 8.dp))
 

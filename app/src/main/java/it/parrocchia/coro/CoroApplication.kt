@@ -1,14 +1,16 @@
 package it.parrocchia.coro
 
 import android.app.Application
+import it.parrocchia.coro.audio.AudioOutputRouter
 import it.parrocchia.coro.audio.PlaybackController
 import it.parrocchia.coro.data.db.CoroDatabase
 import it.parrocchia.coro.data.library.LibraryScanner
 import it.parrocchia.coro.data.library.SoundFontManager
+import it.parrocchia.coro.data.mixer.rode.AndroidUsbRodeHidTransport
+import it.parrocchia.coro.data.mixer.rode.RodeMixerController
 import it.parrocchia.coro.data.prefs.AppSettingsStore
 import it.parrocchia.coro.data.repository.CoroRepository
 import it.parrocchia.coro.domain.mixer.MixerController
-import it.parrocchia.coro.domain.mixer.NoOpMixerController
 
 class CoroApplication : Application() {
 
@@ -32,10 +34,16 @@ class AppContainer(application: Application) {
         settingsStore = settingsStore,
         soundFontManager = soundFontManager
     )
-    val mixerController: MixerController = NoOpMixerController()
+    val audioOutputRouter: AudioOutputRouter = AudioOutputRouter(application)
+    val rodeMixerController: RodeMixerController = RodeMixerController(
+        transport = AndroidUsbRodeHidTransport(application),
+        autoConnectOnInit = true
+    )
+    val mixerController: MixerController = rodeMixerController
     val playbackController: PlaybackController = PlaybackController(
         context = application,
         repository = repository,
-        mixerController = mixerController
+        mixerController = mixerController,
+        audioOutputRouter = audioOutputRouter
     )
 }

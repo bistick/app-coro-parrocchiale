@@ -117,6 +117,52 @@ class AppSettingsStoreTest {
         assertFalse(store.settings.first().keepScreenOnInLive)
         store.setKeepScreenOnInLive(true)
         assertTrue(store.settings.first().keepScreenOnInLive)
+
+        assertEquals(
+            it.parrocchia.coro.domain.model.AppThemeMode.DARK,
+            store.settings.first().themeMode
+        )
+        store.setThemeMode(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT)
+        assertEquals(
+            it.parrocchia.coro.domain.model.AppThemeMode.LIGHT,
+            store.settings.first().themeMode
+        )
+        store.setThemeMode(it.parrocchia.coro.domain.model.AppThemeMode.SYSTEM)
+        assertEquals(
+            it.parrocchia.coro.domain.model.AppThemeMode.SYSTEM,
+            store.settings.first().themeMode
+        )
+
+        assertEquals(
+            it.parrocchia.coro.domain.model.AudioOutputRoute.AUTO,
+            store.settings.first().audioOutputRoute
+        )
+        store.setAudioOutputRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH)
+        assertEquals(
+            it.parrocchia.coro.domain.model.AudioOutputRoute.BLUETOOTH,
+            store.settings.first().audioOutputRoute
+        )
+        store.setAudioOutputRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.USB)
+        assertEquals(
+            it.parrocchia.coro.domain.model.AudioOutputRoute.USB,
+            store.settings.first().audioOutputRoute
+        )
+
+        assertFalse(store.settings.first().hasConfiguredRodeMusicChannel)
+        store.setRodeAutomationConfig(
+            it.parrocchia.coro.domain.mixer.RodeAutomationConfig(),
+            markChannelsConfigured = false
+        )
+        assertFalse(store.settings.first().hasConfiguredRodeMusicChannel)
+
+        val autoCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(
+            enabled = true,
+            musicFaderIndices = setOf(6),
+            alwaysMuteOnStopFaderIndices = setOf(0, 1)
+        )
+        store.setRodeAutomationConfig(autoCfg)
+        assertEquals(autoCfg, store.settings.first().rodeAutomationConfig)
+        assertTrue(store.settings.first().hasConfiguredRodeMusicChannel)
     }
 
     @Test
