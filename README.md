@@ -2,6 +2,20 @@
 
 Applicazione Android touch (Kotlin + Jetpack Compose + Material 3) progettata per programmare ed eseguire le basi musicali (**MIDI**, **KAR** e **MP3/WAV**) durante la Santa Messa, sostituendo la postazione PC con vanBasco.
 
+## Schermate dell'applicazione
+
+### Modalità Mobile (Smartphone)
+
+| Programmazione Messa | Esecuzione Live (Scuro) | Esecuzione Live (Chiaro) | Mixer RØDECaster Pro II |
+| :---: | :---: | :---: | :---: |
+| <img src="docs/screenshots/mobile-planner.png" alt="Programmazione Messa Mobile" width="210" /> | <img src="docs/screenshots/mobile-live.png" alt="Esecuzione Live Tema Scuro" width="210" /> | <img src="docs/screenshots/mobile-live-light.png" alt="Esecuzione Live Tema Chiaro" width="210" /> | <img src="docs/screenshots/mobile-mixer.png" alt="Controllo Mixer RØDECaster Pro II" width="210" /> |
+
+### Modalità Tablet ed E-Ink (Console a due pannelli e Griglia multi-colonna)
+
+| Console Esecuzione Live (Scaletta + Regia laterale) | Programmazione Messa (Griglia multi-colonna) |
+| :---: | :---: |
+| <img src="docs/screenshots/tablet-live.png" alt="Console Esecuzione Live Tablet" width="440" /> | <img src="docs/screenshots/tablet-planner.png" alt="Programmazione Messa Tablet" width="440" /> |
+
 ## Funzionalità principali
 - **Programmazione Messa e Preset Liturgici:**
   - Catalogo completo delle 18 fasi del Rito Romano (Messale Italiano) attivabili/disattivabili con un tocco + fasi personalizzate; ogni fase supporta più brani avviati manualmente (es. Comunione).
