@@ -333,6 +333,8 @@ class CoroViewModelTest {
         assertEquals(autoCfg, vm.rodeMixerState.value.automationConfig)
         vm.muteAllRodeFaders()
         vm.dismissRodeMixerError()
+        vm.setThemeMode(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT)
+        coVerify { repository.setThemeMode(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT) }
         vm.setAudioOutputRoute(it.parrocchia.coro.domain.model.AudioOutputRoute.USB)
         vm.refreshAudioOutputDevices()
     }

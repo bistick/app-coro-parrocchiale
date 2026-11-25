@@ -136,7 +136,13 @@ class ExoAudioPlayer(private val context: Context) : AudioPlaybackEngine {
 
     override fun stopWithAntiClick() {
         scope.launch {
-            val player = exoPlayer ?: return@launch
+            val player = exoPlayer
+            if (player == null) {
+                val cb = activeListener
+                stopInternal()
+                cb?.onCompleted()
+                return@launch
+            }
             fadeJob?.cancel()
             runFadeOut(player, ANTI_CLICK_STOP_MS)
         }

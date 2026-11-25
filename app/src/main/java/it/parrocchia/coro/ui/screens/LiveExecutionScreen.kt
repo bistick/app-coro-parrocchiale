@@ -165,6 +165,11 @@ fun LiveExecutionScreen(
             if (!s.isPreview && s.isBusy) s.activeTrackId else null
         }
     }
+    val lastLiveTrackId by remember {
+        derivedStateOf {
+            playbackStateHolder.value.lastLiveTrackId
+        }
+    }
     val liveErrorMessage by remember {
         derivedStateOf {
             val s = playbackStateHolder.value
@@ -224,8 +229,25 @@ fun LiveExecutionScreen(
         }
     }
 
-    val nextEntry = remember(liveEntries) {
-        liveEntries.firstOrNull { !it.item.track.playedInSession } ?: liveEntries.firstOrNull()
+    val nextEntry = remember(liveEntries, lastLiveTrackId) {
+        if (liveEntries.isEmpty()) {
+            null
+        } else {
+            val anchorIdx = if (lastLiveTrackId != null) {
+                liveEntries.indexOfFirst { it.item.track.id == lastLiveTrackId }
+            } else {
+                -1
+            }
+            if (anchorIdx >= 0) {
+                liveEntries.drop(anchorIdx + 1).firstOrNull { !it.item.track.playedInSession }
+                    ?: liveEntries.firstOrNull { !it.item.track.playedInSession }
+                    ?: liveEntries.getOrNull(anchorIdx + 1)
+                    ?: liveEntries.firstOrNull()
+            } else {
+                liveEntries.firstOrNull { !it.item.track.playedInSession }
+                    ?: liveEntries.firstOrNull()
+            }
+        }
     }
     val hasPlayedAny = remember(liveEntries) {
         liveEntries.any { it.item.track.playedInSession }
@@ -621,6 +643,17 @@ private fun LiveTrackList(
     // Risolto una sola volta nel contenitore padre invece che dentro ogni item della LazyColumn
     val hapticFeedback = LocalHapticFeedback.current
 
+    LaunchedEffect(nextTrackId) {
+        if (nextTrackId == null || listState.isScrollInProgress) return@LaunchedEffect
+        val targetIndex = entries.indexOfFirst { it.item.track.id == nextTrackId }
+        if (targetIndex >= 0) {
+            val visibleIndices = listState.layoutInfo.visibleItemsInfo.map { it.index }
+            if (visibleIndices.isNotEmpty() && targetIndex !in visibleIndices) {
+                listState.animateScrollToItem(targetIndex)
+            }
+        }
+    }
+
     LazyColumn(
         state = listState,
         modifier = modifier,
@@ -635,11 +668,11 @@ private fun LiveTrackList(
             val track = entry.item.track
             val song = entry.item.song
             val isThisPlaying = isAnyLiveBusy && activeTrackId == track.id
-            val isThisNext = !isAnyLiveBusy && nextTrackId == track.id
+            val isThisNext = (!isAnyLiveBusy || isFadingOut) && nextTrackId == track.id && !isThisPlaying
             val isPlayed = track.playedInSession && !isThisPlaying
 
             val containerColor = when {
-                isThisPlaying && isFadingOut -> CoroColors.FadeAmber.copy(alpha = 0.28f)
+                isThisPlaying && isFadingOut -> CoroColors.PlayedMuted
                 isThisPlaying -> CoroColors.PlayGreen.copy(alpha = 0.32f)
                 isThisNext -> CoroColors.SurfaceHighlight
                 isPlayed -> CoroColors.PlayedMuted
@@ -691,7 +724,23 @@ private fun LiveTrackList(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
-                            if (isThisNext) {
+                            if (isThisPlaying && isFadingOut) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(CoroColors.FadeAmberFill)
+                                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "FATTO · SFUMA",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            } else if (isThisNext) {
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
@@ -765,6 +814,7 @@ private fun LiveTrackList(
                             .clip(RoundedCornerShape(14.dp))
                             .background(
                                 when {
+                                    isThisPlaying && isFadingOut -> CoroColors.PlayedAccent.copy(alpha = 0.2f)
                                     isThisPlaying -> CoroColors.PlayGreen
                                     isAnyLiveBusy -> CoroColors.SurfaceElevated
                                     isPlayed -> CoroColors.PlayedAccent.copy(alpha = 0.2f)
@@ -776,6 +826,7 @@ private fun LiveTrackList(
                     ) {
                         Icon(
                             imageVector = when {
+                                isThisPlaying && isFadingOut -> Icons.Default.CheckCircle
                                 isThisPlaying -> Icons.Default.GraphicEq
                                 isAnyLiveBusy -> Icons.Default.Lock
                                 isPlayed -> Icons.Default.CheckCircle
@@ -783,6 +834,7 @@ private fun LiveTrackList(
                             },
                             contentDescription = null,
                             tint = when {
+                                isThisPlaying && isFadingOut -> CoroColors.PlayedAccent
                                 isThisPlaying || isThisNext -> Color.White
                                 isPlayed -> CoroColors.PlayedAccent
                                 else -> CoroColors.TextPrimary
@@ -946,6 +998,8 @@ private fun LiveBottomProgressSection(
         ) {
             Text(
                 text = when {
+                    isFading && nextEntry != null ->
+                        "SFUMA · Prossimo: ${nextEntry.phaseLabel} — ${nextEntry.item.song.title}"
                     isFading -> "SFUMATURA IN CORSO · $activeTitle"
                     isPlaying -> "IN RIPRODUZIONE · $activeTitle"
                     nextEntry != null -> "Pronto: ${nextEntry.phaseLabel} — ${nextEntry.item.song.title}"
@@ -953,7 +1007,7 @@ private fun LiveBottomProgressSection(
                 },
                 style = MaterialTheme.typography.labelLarge,
                 color = when {
-                    isFading -> CoroColors.FadeAmberFill
+                    isFading -> CoroColors.Gold
                     isPlaying -> CoroColors.PlayGreenFill
                     else -> CoroColors.TextSecondary
                 },
@@ -1056,6 +1110,16 @@ private fun LiveSideControlDesk(
                     maxLines = if (isCompactHeight) 2 else 3,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (isFading && nextEntry != null) {
+                    Text(
+                        text = "Prossimo: ${nextEntry.phaseLabel} — ${nextEntry.item.song.title}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = CoroColors.Gold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(if (isCompactHeight) 4.dp else 8.dp))
 

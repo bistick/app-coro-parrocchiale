@@ -8,19 +8,22 @@ Applicazione Android touch (Kotlin + Jetpack Compose + Material 3) progettata pe
   - **13 preset liturgici pronti all'uso** divisi per categoria: *Ordinarie* (Feriale, Domenicale, Solenne), *Tempi Forti* (Avvento/Quaresima, Natale con Kalenda e Bacio del Bambino, Domenica delle Palme, Pentecoste/Corpus Domini), *Triduo Pasquale* (Giovedì Santo, Venerdì Santo, Veglia Pasquale, Domenica di Pasqua) e *Celebrazioni* (Matrimonio, Esequie/Funerale).
   - **Preset personalizzati salvabili:** salva la scaletta attuale (fasi e brani con tutte le relative impostazioni) per riutilizzarla con un tocco.
 - **Libreria da cartella sul dispositivo:** selezione tramite Android Storage Access Framework (cartella copiata da PC via USB/Drive, incluse sottocartelle), ricerca rapida e filtri. Include 9 brani di prova pronti all'uso.
-- **Impostazioni per singolo brano salvate come default in libreria:**
+- **Impostazioni per singolo brano salvate e sincronizzate:**
   - Punto di attacco (`mm:ss`) con anteprima audio e cattura al volo (*"Imposta punto di attacco qui"*)
   - Durata sfumatura (`0,5–15 s`)
   - Cambio tonalità (`-12..+12` semitoni; sui MIDI preserva intatto il canale 10 delle percussioni)
   - Volume relativo brano (`20%–150%`)
-- **Console Esecuzione Live (Smartphone, Tablet e Desktop):**
-  - Interfaccia adattiva edge-to-edge ottimizzata anche per caratteri di sistema grandi, tasti ad alto contrasto su tema scuro, schermo sempre acceso, indicatore volume multimediale di sistema e scorciatoie da tastiera (`Spazio`, `Shift+Spazio`, `Ctrl+P`, `Ctrl+N`, `Ctrl+O`, `Ctrl+F`).
-  - **Protezione tocchi accidentali:** pressione prolungata (default `450 ms`, regolabile `300–800 ms` con area test) per Avvio, Sfuma, Stop immediato e Uscita; blocco mutuo degli altri brani durante la riproduzione.
+  - Canali microfonici extra da aprire sul mixer per quel brano (es. solista/ambone)
+- **Console Esecuzione Live (Smartphone, Tablet, E-Ink e Desktop):**
+  - Interfaccia adattiva edge-to-edge con **Tema Scuro**, **Tema Chiaro** ad alto contrasto o **Sistema**, ottimizzata anche per caratteri grandi e display e-ink (es. BOOX Tab Mini C), schermo sempre acceso, indicatore volume multimediale e scorciatoie da tastiera (`Spazio`, `Shift+Spazio`, `Ctrl+P`, `Ctrl+N`, `Ctrl+O`, `Ctrl+F`).
+  - **Protezione tocchi accidentali:** pressione prolungata in tempo reale (default `450 ms`, regolabile `300–1200 ms` con area test) per Avvio, Sfuma, Stop immediato e Uscita; segnatura immediata del brano eseguito su Sfuma/Stop con indicazione automatica del brano successivo (`PROSSIMO`).
+- **Controllo Mixer RØDECaster Pro II e Routing Audio:**
+  - Integrazione USB HID nativa con **RØDECaster Pro II** (connessione automatica su porta USB 1, rilevamento automatico del canale musica `USB 1 (Main)`, automazione Muto/Unmute a inizio e fine brano e protezione uscita casse Monitor).
+  - Selettore dedicato per forzare l'uscita audio su **Bluetooth**, **USB Audio**, **Altoparlante** o **Automatica**.
 - **Motore Audio integrato 100% offline:**
   - **MIDI (`.mid`, `.midi`, `.kar`):** sintetizzatore nativo **FluidSynth v2.6.2** (256 voci, interpolazione di 4° ordine, riverbero e chorus caldi, frequenza nativa 48 kHz, cache RAM del banco suoni per avvio immediato, limiter morbido $C^1$ anti-distorsione) + parser `tml.h`. Supporta banchi suoni **`.sf2`** e **`.sf3`** (con `TimGM6mb.sf2` integrato e link diretti nelle Impostazioni per scaricare banchi gratuiti come *MuseScore General*, *FluidR3 GM* e *GeneralUser GS*).
   - **Audio (`.mp3`, `.wav`, `.m4a`, `.ogg`, `.flac`):** **AndroidX Media3 ExoPlayer**.
   - Micro-rampa anti-click sullo stop immediato e sfumatura fluida pensata per l'impianto audio della chiesa.
-- **Predisposizioni future:** interfaccia `MixerController` agganciata agli eventi di esecuzione e campi `mixerConfigJson` nel database per futura integrazione con mixer esterni (es. RØDECaster Pro II).
 
 ## Aprire, compilare e debuggare in Android Studio
 1. Apri la cartella del progetto in **Android Studio** (*File → Open*).
@@ -30,9 +33,9 @@ Applicazione Android touch (Kotlin + Jetpack Compose + Material 3) progettata pe
 
 ## Compilazione da terminale
 ```powershell
-.\gradlew.bat testDebugUnitTest assembleDebug
+.\gradlew.bat testDebugUnitTest assembleRelease
 ```
-L'APK di debug viene generato in `app\build\outputs\apk\debug\app-debug.apk`.
+L'APK di release viene generato in `app\build\outputs\apk\release\app-release.apk`.
 
 ## Licenza e componenti di terze parti
 - Il codice sorgente di **Coro** è rilasciato sotto licenza **MIT** (vedi [LICENSE](LICENSE)).

@@ -13,6 +13,7 @@ import it.parrocchia.coro.data.library.SoundFontManager
 import it.parrocchia.coro.data.prefs.AppSettings
 import it.parrocchia.coro.data.prefs.AppSettingsStore
 import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
+import it.parrocchia.coro.domain.model.AppThemeMode
 import it.parrocchia.coro.domain.model.AudioOutputRoute
 import it.parrocchia.coro.domain.model.MassPreset
 import it.parrocchia.coro.domain.model.MassPresetCatalog
@@ -444,6 +445,7 @@ class CoroRepository(
     suspend fun setHoldDurationMs(durationMs: Int) = settingsStore.setHoldDurationMs(durationMs)
     suspend fun setDefaultFadeOutMs(fadeMs: Int) = settingsStore.setDefaultFadeOutMs(fadeMs)
     suspend fun setKeepScreenOnInLive(enabled: Boolean) = settingsStore.setKeepScreenOnInLive(enabled)
+    suspend fun setThemeMode(mode: AppThemeMode) = settingsStore.setThemeMode(mode)
     suspend fun setAudioOutputRoute(route: AudioOutputRoute) = settingsStore.setAudioOutputRoute(route)
     suspend fun setRodeAutomationConfig(
         config: RodeAutomationConfig,

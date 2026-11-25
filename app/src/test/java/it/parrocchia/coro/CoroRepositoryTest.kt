@@ -315,6 +315,7 @@ class CoroRepositoryTest {
         repository.setHoldDurationMs(550)
         repository.setDefaultFadeOutMs(4000)
         repository.setKeepScreenOnInLive(false)
+        repository.setThemeMode(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT)
         val autoCfg = it.parrocchia.coro.domain.mixer.RodeAutomationConfig(
             enabled = true,
             musicFaderIndices = setOf(6),
@@ -325,6 +326,7 @@ class CoroRepositoryTest {
         assertEquals(550, s.holdDurationMs)
         assertEquals(4000, s.defaultFadeOutMs)
         assertFalse(s.keepScreenOnInLive)
+        assertEquals(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT, s.themeMode)
         assertEquals(autoCfg, s.rodeAutomationConfig)
 
         // Default mixerConfigJson on song is inherited by addSongToPhase AND synced to existing active Mass tracks

@@ -34,6 +34,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Fallback locale con firma debug per produrre un APK release installabile
+            // quando non è configurato un keystore di produzione esterno.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

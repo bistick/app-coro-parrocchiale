@@ -26,6 +26,7 @@ import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSiz
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -45,6 +46,7 @@ import it.parrocchia.coro.ui.screens.RodeMixerScreen
 import it.parrocchia.coro.ui.screens.SettingsScreen
 import it.parrocchia.coro.ui.theme.CoroColors
 import it.parrocchia.coro.ui.theme.CoroTheme
+import it.parrocchia.coro.ui.theme.isCoroDarkTheme
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -68,8 +70,27 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val windowSizeClass = calculateWindowSizeClass(this)
-            CoroTheme {
-                val vm: CoroViewModel = viewModel(factory = CoroViewModel.Factory(appContainer))
+            val vm: CoroViewModel = viewModel(factory = CoroViewModel.Factory(appContainer))
+            val settings by vm.settings.collectAsStateWithLifecycle()
+            val useDarkTheme = isCoroDarkTheme(settings.themeMode)
+
+            DisposableEffect(useDarkTheme) {
+                val barStyle = if (useDarkTheme) {
+                    SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+                }
+                enableEdgeToEdge(
+                    statusBarStyle = barStyle,
+                    navigationBarStyle = barStyle
+                )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.isNavigationBarContrastEnforced = false
+                }
+                onDispose {}
+            }
+
+            CoroTheme(themeMode = settings.themeMode) {
                 CoroRootApp(
                     viewModel = vm,
                     windowSizeClass = windowSizeClass
@@ -289,6 +310,7 @@ private fun CoroRootApp(
                         onSetHoldDurationMs = viewModel::setHoldDurationMs,
                         onSetDefaultFadeOutMs = viewModel::setDefaultFadeOutMs,
                         onSetKeepScreenOn = viewModel::setKeepScreenOnInLive,
+                        onSetThemeMode = viewModel::setThemeMode,
                         onOpenMixer = { navController.navigate(Routes.MIXER) },
                         isMixerConnected = rodeMixerState.isConnected,
                         availableMixerFaders = rodeMixerState.assignedFaders,

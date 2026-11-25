@@ -16,6 +16,7 @@ import it.parrocchia.coro.data.prefs.AppSettings
 import it.parrocchia.coro.data.repository.CoroRepository
 import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
 import it.parrocchia.coro.domain.mixer.RodeMixerState
+import it.parrocchia.coro.domain.model.AppThemeMode
 import it.parrocchia.coro.domain.model.AudioOutputRoute
 import it.parrocchia.coro.domain.model.AudioOutputStatus
 import it.parrocchia.coro.domain.model.MassPreset
@@ -139,6 +140,7 @@ class CoroViewModel(
     fun resetMass(keepEnabledPhases: Boolean) {
         viewModelScope.launch {
             playbackController.stopPreviewIfActive()
+            playbackController.resetLastLiveTrack()
             repository.resetMassForNewDay(keepEnabledPhases)
             postToast("Scaletta azzerata per la nuova messa")
         }
@@ -147,6 +149,9 @@ class CoroViewModel(
     fun applyLiturgicalPreset(preset: MassPreset, clearTracks: Boolean) {
         viewModelScope.launch {
             playbackController.stopPreviewIfActive()
+            if (clearTracks) {
+                playbackController.resetLastLiveTrack()
+            }
             repository.applyLiturgicalPreset(preset, clearTracks)
             postToast("Preset applicato: ${preset.name}")
         }
@@ -169,6 +174,7 @@ class CoroViewModel(
     fun applySavedTemplate(templateId: Long, templateTitle: String) {
         viewModelScope.launch {
             playbackController.stopPreviewIfActive()
+            playbackController.resetLastLiveTrack()
             repository.applySavedTemplate(templateId)
             postToast("Preset caricato: $templateTitle")
         }
@@ -320,6 +326,10 @@ class CoroViewModel(
         viewModelScope.launch { repository.setKeepScreenOnInLive(enabled) }
     }
 
+    fun setThemeMode(mode: AppThemeMode) {
+        viewModelScope.launch { repository.setThemeMode(mode) }
+    }
+
     fun setAudioOutputRoute(route: AudioOutputRoute) {
         audioOutputRouter?.setPreferredRoute(route)
         viewModelScope.launch {
@@ -347,6 +357,7 @@ class CoroViewModel(
 
     fun resetSessionPlayed(planId: Long) {
         viewModelScope.launch {
+            playbackController.resetLastLiveTrack()
             repository.resetSessionProgress(planId)
             postToast("Stato brani eseguiti azzerato")
         }

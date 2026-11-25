@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import it.parrocchia.coro.domain.mixer.RodeAutomationConfig
 import it.parrocchia.coro.domain.mixer.RodeAutomationConfigCodec
+import it.parrocchia.coro.domain.model.AppThemeMode
 import it.parrocchia.coro.domain.model.AudioOutputRoute
 import it.parrocchia.coro.domain.model.TrackSettings
 import kotlinx.coroutines.flow.Flow
@@ -25,13 +26,14 @@ data class AppSettings(
     val holdDurationMs: Int = DEFAULT_HOLD_DURATION_MS,
     val defaultFadeOutMs: Int = TrackSettings.DEFAULT_FADE_OUT_MS,
     val keepScreenOnInLive: Boolean = true,
+    val themeMode: AppThemeMode = AppThemeMode.DARK,
     val audioOutputRoute: AudioOutputRoute = AudioOutputRoute.AUTO,
     val rodeAutomationConfig: RodeAutomationConfig = RodeAutomationConfig(),
     val hasConfiguredRodeMusicChannel: Boolean = false
 ) {
     companion object {
         const val MIN_HOLD_DURATION_MS = 300
-        const val MAX_HOLD_DURATION_MS = 800
+        const val MAX_HOLD_DURATION_MS = 1200
         const val DEFAULT_HOLD_DURATION_MS = 450
     }
 }
@@ -48,6 +50,7 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
         val HOLD_DURATION_MS = intPreferencesKey("hold_duration_ms")
         val DEFAULT_FADE_OUT_MS = intPreferencesKey("default_fade_out_ms")
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on_live")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
         val AUDIO_OUTPUT_ROUTE = stringPreferencesKey("audio_output_route")
         val RODE_AUTOMATION_JSON = stringPreferencesKey("rode_automation_json")
         val RODE_MUSIC_CHANNEL_CONFIGURED = booleanPreferencesKey("rode_music_channel_configured")
@@ -65,6 +68,7 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
             defaultFadeOutMs = (prefs[Keys.DEFAULT_FADE_OUT_MS] ?: TrackSettings.DEFAULT_FADE_OUT_MS)
                 .coerceIn(TrackSettings.MIN_FADE_OUT_MS, TrackSettings.MAX_FADE_OUT_MS),
             keepScreenOnInLive = prefs[Keys.KEEP_SCREEN_ON] ?: true,
+            themeMode = AppThemeMode.fromStoredName(prefs[Keys.THEME_MODE]),
             audioOutputRoute = AudioOutputRoute.fromStoredName(prefs[Keys.AUDIO_OUTPUT_ROUTE]),
             rodeAutomationConfig = decodedRodeConfig,
             hasConfiguredRodeMusicChannel = (prefs[Keys.RODE_MUSIC_CHANNEL_CONFIGURED] == true) ||
@@ -109,6 +113,10 @@ class AppSettingsStore(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setKeepScreenOnInLive(enabled: Boolean) {
         dataStore.edit { it[Keys.KEEP_SCREEN_ON] = enabled }
+    }
+
+    suspend fun setThemeMode(mode: AppThemeMode) {
+        dataStore.edit { it[Keys.THEME_MODE] = mode.name }
     }
 
     suspend fun setAudioOutputRoute(route: AudioOutputRoute) {

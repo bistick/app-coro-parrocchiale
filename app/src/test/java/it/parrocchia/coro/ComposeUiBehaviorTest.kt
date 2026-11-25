@@ -1,5 +1,7 @@
 package it.parrocchia.coro
 
+import android.content.Context
+import android.provider.Settings
 import androidx.compose.material3.Text
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -18,6 +20,8 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.test.core.app.ApplicationProvider
 import io.mockk.mockk
 import it.parrocchia.coro.audio.PlaybackController
 import it.parrocchia.coro.audio.PlaybackState
@@ -139,6 +143,55 @@ class ComposeUiBehaviorTest {
         composeRule.onNodeWithText("AVVIA BRANO").assertIsDisplayed()
         composeRule.onNodeWithText("AVVIA BRANO").performClick()
         assertFalse("Un tocco breve non deve confermare l'azione live", confirmed)
+    }
+
+    @Test
+    fun holdToConfirmSurface_respectsHoldDurationEvenWhenAnimationsAreDisabledLikeEInkBoox() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
+        try {
+            var confirmedCount = 0
+            composeRule.mainClock.autoAdvance = false
+            composeRule.setContent {
+                CoroTheme {
+                    HoldToConfirmSurface(
+                        holdDurationMs = 500,
+                        onConfirmed = { confirmedCount++ },
+                        containerColor = CoroColors.PlayGreen,
+                        progressFillColor = CoroColors.PlayGreenFill,
+                        contentDescriptionText = "Avvia brano"
+                    ) { isHolding ->
+                        Text(if (isHolding) "Tieni premuto" else "AVVIA BRANO")
+                    }
+                }
+            }
+            composeRule.mainClock.advanceTimeBy(50L)
+
+            // 1) Tocco breve di 120 ms su dispositivo con animazioni disattivate (es. BOOX Tab Mini C): NON deve partire
+            composeRule.onNodeWithContentDescription("Avvia brano").performTouchInput {
+                down(center)
+            }
+            composeRule.mainClock.advanceTimeBy(120L)
+            assertEquals("Non deve attivarsi appena premuto con animator_duration_scale=0", 0, confirmedCount)
+            composeRule.onNodeWithContentDescription("Avvia brano").performTouchInput {
+                up()
+            }
+            composeRule.mainClock.advanceTimeBy(100L)
+            assertEquals("Non deve attivarsi dopo rilascio anticipato", 0, confirmedCount)
+
+            // 2) Pressione prolungata completa (>= 500 ms): DEVE partire regolarmente
+            composeRule.onNodeWithContentDescription("Avvia brano").performTouchInput {
+                down(center)
+            }
+            composeRule.mainClock.advanceTimeBy(550L)
+            assertEquals("Deve attivarsi dopo l'intera durata della pressione prolungata", 1, confirmedCount)
+            composeRule.onNodeWithContentDescription("Avvia brano").performTouchInput {
+                up()
+            }
+            composeRule.mainClock.advanceTimeBy(50L)
+        } finally {
+            Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        }
     }
 
     @Test
@@ -370,19 +423,22 @@ class ComposeUiBehaviorTest {
         var reloadedDemo = false
         var resetSf = false
         var backed = false
+        val settingsState = androidx.compose.runtime.mutableStateOf(
+            AppSettings(
+                libraryFolderUri = "content://tree/canti",
+                libraryFolderName = "Canti Coro",
+                customSoundFontLocalPath = "/data/sf/GeneralUser.sf3",
+                customSoundFontName = "GeneralUser.sf3",
+                holdDurationMs = 500,
+                defaultFadeOutMs = 3000,
+                keepScreenOnInLive = true
+            )
+        )
 
         composeRule.setContent {
-            CoroTheme {
+            CoroTheme(themeMode = settingsState.value.themeMode) {
                 SettingsScreen(
-                    settings = AppSettings(
-                        libraryFolderUri = "content://tree/canti",
-                        libraryFolderName = "Canti Coro",
-                        customSoundFontLocalPath = "/data/sf/GeneralUser.sf3",
-                        customSoundFontName = "GeneralUser.sf3",
-                        holdDurationMs = 500,
-                        defaultFadeOutMs = 3000,
-                        keepScreenOnInLive = true
-                    ),
+                    settings = settingsState.value,
                     isScanning = false,
                     onSelectLibraryFolder = { _, _ -> },
                     onRescanLibrary = { rescanned = true },
@@ -392,6 +448,9 @@ class ComposeUiBehaviorTest {
                     onSetHoldDurationMs = {},
                     onSetDefaultFadeOutMs = {},
                     onSetKeepScreenOn = {},
+                    onSetThemeMode = { mode ->
+                        settingsState.value = settingsState.value.copy(themeMode = mode)
+                    },
                     onBack = { backed = true }
                 )
             }
@@ -409,6 +468,20 @@ class ComposeUiBehaviorTest {
 
         composeRule.onNodeWithContentDescription("Indietro").performClick()
         assertTrue(backed)
+
+        // Selettore tema Chiaro / Scuro / Sistema
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Tema dell'app"))
+        composeRule.onNodeWithText("Chiaro").performClick()
+        composeRule.waitForIdle()
+        assertEquals(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT, settingsState.value.themeMode)
+
+        composeRule.onNodeWithText("Sistema").performClick()
+        composeRule.waitForIdle()
+        assertEquals(it.parrocchia.coro.domain.model.AppThemeMode.SYSTEM, settingsState.value.themeMode)
+
+        composeRule.onNodeWithText("Scuro").performClick()
+        composeRule.waitForIdle()
+        assertEquals(it.parrocchia.coro.domain.model.AppThemeMode.DARK, settingsState.value.themeMode)
     }
 
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
@@ -468,6 +541,52 @@ class ComposeUiBehaviorTest {
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     @Test
     fun liveExecutionScreen_rendersExpandedTabletDeskLayout() {
+        val song1 = SongEntity(
+            id = 1L,
+            uri = "asset:///demo/01.mid",
+            title = "Gloria in Excelsis",
+            fileName = "01.mid",
+            format = AudioFormat.MIDI.name,
+            durationMs = 120_000L
+        )
+        val song2 = SongEntity(
+            id = 2L,
+            uri = "asset:///demo/02.mid",
+            title = "Alleluia Pasquale",
+            fileName = "02.mid",
+            format = AudioFormat.MIDI.name,
+            durationMs = 90_000L
+        )
+        val planHolder = androidx.compose.runtime.mutableStateOf(
+            MassPlanWithPhases(
+                plan = MassPlanEntity(
+                    id = 1L,
+                    title = "Messa Domenicale",
+                    dateEpochDay = 20_000L,
+                    templateCategory = MassPresetCatalog.DOMENICALE.id
+                ),
+                phases = listOf(
+                    PhaseWithTracks(
+                        MassPhaseEntity(10L, 1L, StandardPhaseType.INGRESSO.name, null, 10, true),
+                        listOf(
+                            PlannedTrackWithSong(
+                                PlannedTrackEntity(id = 100L, phaseId = 10L, songId = 1L, sortOrder = 0, playedInSession = false),
+                                song1
+                            )
+                        )
+                    ),
+                    PhaseWithTracks(
+                        MassPhaseEntity(20L, 1L, StandardPhaseType.ALLELUIA.name, null, 20, true),
+                        listOf(
+                            PlannedTrackWithSong(
+                                PlannedTrackEntity(id = 200L, phaseId = 20L, songId = 2L, sortOrder = 0, playedInSession = false),
+                                song2
+                            )
+                        )
+                    )
+                )
+            )
+        )
         val playbackFlow = MutableStateFlow(
             PlaybackState(
                 status = PlaybackStatus.PLAYING,
@@ -486,7 +605,7 @@ class ComposeUiBehaviorTest {
         composeRule.setContent {
             CoroTheme {
                 LiveExecutionScreen(
-                    massPlan = sampleMassPlan(withTracks = true),
+                    massPlan = planHolder.value,
                     settings = AppSettings(keepScreenOnInLive = false),
                     playbackStateFlow = playbackFlow,
                     windowSizeClass = expandedClass,
@@ -501,6 +620,37 @@ class ComposeUiBehaviorTest {
         }
         composeRule.mainClock.advanceTimeBy(100L)
         composeRule.onAllNodesWithText("Gloria in Excelsis").onFirst().assertIsDisplayed()
+
+        // Appena si preme SFUMA: il brano corrente è segnato come fatto e il successivo diventa subito PROSSIMO
+        planHolder.value = planHolder.value.copy(
+            phases = listOf(
+                PhaseWithTracks(
+                    MassPhaseEntity(10L, 1L, StandardPhaseType.INGRESSO.name, null, 10, true),
+                    listOf(
+                        PlannedTrackWithSong(
+                            PlannedTrackEntity(id = 100L, phaseId = 10L, songId = 1L, sortOrder = 0, playedInSession = true),
+                            song1
+                        )
+                    )
+                ),
+                planHolder.value.phases[1]
+            )
+        )
+        playbackFlow.value = PlaybackState(
+            status = PlaybackStatus.FADING_OUT,
+            activeTrackId = 100L,
+            lastLiveTrackId = 100L,
+            title = "Gloria in Excelsis",
+            phaseLabel = "Ingresso",
+            positionMs = 31_000L,
+            durationMs = 120_000L,
+            fadeOutMs = 3000,
+            isPreview = false
+        )
+        composeRule.mainClock.advanceTimeBy(100L)
+        composeRule.onNodeWithText("FATTO · SFUMA").assertIsDisplayed()
+        composeRule.onNodeWithText("PROSSIMO").assertIsDisplayed()
+        composeRule.onNodeWithText("Prossimo: Acclamazione al Vangelo — Alleluia Pasquale").assertExists()
     }
 
     @Test

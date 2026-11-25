@@ -119,6 +119,21 @@ class AppSettingsStoreTest {
         assertTrue(store.settings.first().keepScreenOnInLive)
 
         assertEquals(
+            it.parrocchia.coro.domain.model.AppThemeMode.DARK,
+            store.settings.first().themeMode
+        )
+        store.setThemeMode(it.parrocchia.coro.domain.model.AppThemeMode.LIGHT)
+        assertEquals(
+            it.parrocchia.coro.domain.model.AppThemeMode.LIGHT,
+            store.settings.first().themeMode
+        )
+        store.setThemeMode(it.parrocchia.coro.domain.model.AppThemeMode.SYSTEM)
+        assertEquals(
+            it.parrocchia.coro.domain.model.AppThemeMode.SYSTEM,
+            store.settings.first().themeMode
+        )
+
+        assertEquals(
             it.parrocchia.coro.domain.model.AudioOutputRoute.AUTO,
             store.settings.first().audioOutputRoute
         )

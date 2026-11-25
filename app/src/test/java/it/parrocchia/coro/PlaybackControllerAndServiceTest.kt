@@ -152,11 +152,13 @@ class PlaybackControllerAndServiceTest {
         controller.seekPreview(5000L)
         assertEquals(0, midiEngine.transposeCalls)
 
-        // Fade out
+        // Fade out immediately marks track played & sets lastLiveTrackId
         controller.fadeOutCurrent()
         assertEquals(PlaybackStatus.FADING_OUT, controller.state.value.status)
+        assertEquals(10L, controller.state.value.lastLiveTrackId)
         assertEquals(3000, midiEngine.lastFadeOutMs)
         assertTrue(mixer.events.contains("fade:10:3000"))
+        coVerify(exactly = 1) { repository.markTrackPlayed(10L, true) }
 
         // Second fadeOut ignored when already FADING_OUT
         controller.fadeOutCurrent()
@@ -165,12 +167,16 @@ class PlaybackControllerAndServiceTest {
         assertEquals(0.5f, controller.state.value.fadeProgress, 1e-4f)
         assertEquals(120_000L, controller.state.value.durationMs) // dur <= 0 keeps previous duration
 
-        // Completion marks track played & resets to IDLE
+        // Completion resets to IDLE while preserving lastLiveTrackId (and without duplicating markTrackPlayed)
         midiEngine.listener!!.onCompleted()
         assertEquals(PlaybackStatus.IDLE, controller.state.value.status)
+        assertEquals(10L, controller.state.value.lastLiveTrackId)
         assertTrue(mixer.events.contains("stop:10"))
-        coVerify { repository.markTrackPlayed(10L, true) }
+        coVerify(exactly = 1) { repository.markTrackPlayed(10L, true) }
         assertTrue(serviceStoppedCount >= 1)
+
+        controller.resetLastLiveTrack()
+        assertNull(controller.state.value.lastLiveTrackId)
 
         // Progress after IDLE is safely ignored
         midiEngine.listener!!.onProgress(99_000L, 120_000L, false, 0f)
@@ -187,22 +193,23 @@ class PlaybackControllerAndServiceTest {
         audioEngine.listener!!.onProgress(20_000L, 180_000L, false, 0f)
         assertEquals(20_000L, controller.state.value.positionMs)
 
-        // Fade out & stop immediate on audio engine
-        controller.fadeOutCurrent()
-        assertEquals(4000, audioEngine.lastFadeOutMs)
-
+        // Stop immediate on live audio marks track played immediately and sets lastLiveTrackId
         controller.stopImmediateCurrent()
         assertEquals(1, audioEngine.stopWithAntiClickCalls)
+        assertEquals(20L, controller.state.value.lastLiveTrackId)
+        coVerify(exactly = 1) { repository.markTrackPlayed(20L, true) }
         assertEquals(listOf(item.track.mixerConfigJson), mixer.stopMixerJsons)
 
-        // Error transitions to ERROR and clearError returns to IDLE
+        // Error transitions to ERROR and clearError returns to IDLE preserving lastLiveTrackId
         audioEngine.listener!!.onError("File non trovato")
         assertEquals(PlaybackStatus.ERROR, controller.state.value.status)
         assertEquals("File non trovato", controller.state.value.errorMessage)
+        assertEquals(20L, controller.state.value.lastLiveTrackId)
         // onTrackStop was already fired on stopImmediateCurrent and must not fire twice
         assertEquals(1, mixer.stopMixerJsons.size)
         controller.clearError()
         assertEquals(PlaybackStatus.IDLE, controller.state.value.status)
+        assertEquals(20L, controller.state.value.lastLiveTrackId)
 
         // clearError / stopImmediate / fadeOut when IDLE are safe no-ops
         controller.clearError()
@@ -211,7 +218,7 @@ class PlaybackControllerAndServiceTest {
     }
 
     @Test
-    fun stopImmediateDuringLoading_stopsSynchronouslyWithoutMarkingPlayed() = runTest {
+    fun stopImmediateDuringLoading_stopsSynchronouslyAndMarksLiveTrackPlayed() = runTest {
         val testDispatcher = StandardTestDispatcher()
         val controller = createController(dispatcher = testDispatcher)
 
@@ -219,7 +226,10 @@ class PlaybackControllerAndServiceTest {
         assertEquals(PlaybackStatus.LOADING, controller.state.value.status)
 
         controller.stopImmediateCurrent()
+        testDispatcher.scheduler.advanceUntilIdle()
         assertEquals(PlaybackStatus.IDLE, controller.state.value.status)
+        assertEquals(10L, controller.state.value.lastLiveTrackId)
+        coVerify(exactly = 1) { repository.markTrackPlayed(10L, true) }
         assertEquals(1, midiEngine.stopImmediateSyncCalls)
         assertEquals(1, audioEngine.stopImmediateCalls)
     }
